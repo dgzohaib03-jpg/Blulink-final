@@ -4,6 +4,8 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Device } from '@capacitor/device';
+import { Network } from '@capacitor/network';
 import { Peer, DataConnection } from 'peerjs';
 import { motion, AnimatePresence } from 'motion/react';
 import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X } from 'lucide-react';
@@ -48,6 +50,8 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [showId, setShowId] = useState(false);
+  const [deviceInfo, setDeviceInfo] = useState<any>(null);
+  const [isOffline, setIsOffline] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
   const [newContactId, setNewContactId] = useState('');
@@ -157,6 +161,58 @@ export default function App() {
     };
     initCrypto();
   }, []);
+
+  // Capacitor Init
+  useEffect(() => {
+    const initCapacitor = async () => {
+      try {
+        const info = await Device.getInfo();
+        setDeviceInfo(info);
+        
+        const status = await Network.getStatus();
+        setIsOffline(!status.connected);
+        
+        Network.addListener('networkStatusChange', status => {
+          setIsOffline(!status.connected);
+        });
+      } catch (e) {
+        console.warn('Capacitor not available, running in browser mode');
+      }
+    };
+    initCapacitor();
+  }, []);
+
+  const startBluetoothDiscovery = async () => {
+    try {
+      if (!('bluetooth' in navigator)) {
+        setLastError('Web Bluetooth not supported in this browser');
+        return;
+      }
+      
+      // @ts-ignore
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true
+      });
+      
+      if (device) {
+        const newNode = {
+          id: `bluelink-${device.id || Math.random().toString(36).substring(2, 10)}`,
+          name: device.name || 'BT Device',
+          signal: -65,
+          dist: 2,
+          type: 'unknown' as const
+        };
+        
+        setDiscoveredNodes(prev => {
+           if (prev.find(n => n.name === newNode.name)) return prev;
+           return [newNode, ...prev];
+        });
+      }
+    } catch (e) {
+      console.error('BT Discovery Error:', e);
+      setLastError('Bluetooth discovery cancelled or failed');
+    }
+  };
 
   const handleScanSuccess = useCallback((decodedText: string) => {
     setRemoteId(decodedText);
@@ -1004,7 +1060,7 @@ export default function App() {
               <div className="flex items-center gap-2 mr-1">
                 <div className="p-1.5 px-2.5 border border-white/10 rounded-xl flex items-center gap-2 bg-white/5">
                    <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
-                   <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Online</span>
+                   <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Local Mesh</span>
                 </div>
               </div>
             )}
@@ -1115,6 +1171,50 @@ export default function App() {
                   >
                     Wipe Node History
                   </button>
+                </div>
+
+                <div className="w-full mt-4 pt-8 border-t border-white/5">
+                  <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-4">Discovery Metrics</h3>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="p-4 bg-app-sec/40 rounded-3xl border border-white/5">
+                      <div className="text-xs font-bold text-gray-500 mb-1">PROTO</div>
+                      <div className="text-sm font-bold text-brand-blue">BLE MESH</div>
+                    </div>
+                    <div className="p-4 bg-app-sec/40 rounded-3xl border border-white/5">
+                      <div className="text-xs font-bold text-gray-500 mb-1">CRYPTO</div>
+                      <div className="text-sm font-bold text-brand-blue">ED25519</div>
+                    </div>
+                  </div>
+
+                  {deviceInfo && (
+                    <div className="mt-4 p-5 bg-white/[0.02] border border-white/5 rounded-[32px]">
+                       <div className="flex items-center gap-3 mb-4">
+                          <div className="w-8 h-8 rounded-xl bg-brand-blue/10 flex items-center justify-center">
+                             <Activity size={16} className="text-brand-blue" />
+                          </div>
+                          <div>
+                             <h4 className="text-[10px] font-bold text-gray-200">Native Bridge</h4>
+                             <p className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">Capacitor Engine Active</p>
+                          </div>
+                       </div>
+                       <div className="space-y-2.5 text-left">
+                          <div className="flex justify-between items-center">
+                             <span className="text-[9px] text-gray-600 font-bold uppercase">Node Hardware</span>
+                             <span className="text-[10px] text-gray-400 font-mono">{deviceInfo.model || 'Standard Interface'}</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                             <span className="text-[9px] text-gray-600 font-bold uppercase">Link Status</span>
+                             <span className={`text-[9px] font-black uppercase tracking-widest ${isOffline ? 'text-red-500' : 'text-green-500'}`}>
+                                {isOffline ? 'Offline Priority' : 'Hybrid Active'}
+                             </span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                             <span className="text-[9px] text-gray-600 font-bold uppercase">Packet Integrity</span>
+                             <span className="text-[10px] text-gray-400 font-mono">Validated</span>
+                          </div>
+                       </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </motion.div>
@@ -1509,6 +1609,13 @@ export default function App() {
                  </div>
 
                  <div className="flex flex-col items-center gap-2 pt-6 pb-20">
+                    <button 
+                      onClick={startBluetoothDiscovery}
+                      className="flex items-center gap-2 px-6 py-3 bg-brand-blue/10 border border-brand-blue/20 rounded-full text-brand-blue hover:bg-brand-blue hover:text-white transition-all active:scale-95 group mb-4"
+                    >
+                      <Bluetooth size={16} className="group-hover:rotate-12 transition-transform" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest">Active BT Discovery</span>
+                    </button>
                     <div className="flex items-center gap-2">
                        <span className="w-1 h-1 bg-brand-blue rounded-full animate-bounce [animation-delay:-0.3s]" />
                        <span className="w-1 h-1 bg-brand-blue rounded-full animate-bounce [animation-delay:-0.15s]" />

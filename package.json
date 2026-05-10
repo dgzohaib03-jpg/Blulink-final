@@ -11,7 +11,12 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.29.0",
+    "@capacitor/android": "^8.3.3",
+    "@capacitor/cli": "^8.3.3",
+    "@capacitor/core": "^8.3.3",
+    "@capacitor/device": "^8.0.2",
+    "@capacitor/ios": "^8.3.3",
+    "@capacitor/network": "^8.0.1",
     "@tailwindcss/vite": "^4.1.14",
     "@types/crypto-js": "^4.2.2",
     "@vitejs/plugin-react": "^5.0.4",

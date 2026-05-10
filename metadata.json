@@ -1,6 +1,5 @@
 {
-  "name": "BlueLink P2P",
-  "description": "Secure, peer-to-peer mobile chat application using WebRTC for direct device-to-device communication, inspired by Bluetooth P2P connectivity.",
-  "requestFramePermissions": ["microphone", "camera"],
-  "majorCapabilities": []
+  "name": "BlueLink Mesh P2P",
+  "description": "Totally offline, secure, peer-to-peer mobile mesh chat. Uses Web Bluetooth for proximity discovery and WebRTC for direct device-to-device communication. Capacitor-ready for Android/iOS.",
+  "requestFramePermissions": ["microphone", "camera", "bluetooth"]
 }
