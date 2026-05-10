@@ -6,6 +6,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Device } from '@capacitor/device';
 import { Network } from '@capacitor/network';
+import { BleClient } from '@capacitor-community/bluetooth-le';
 import { Peer, DataConnection } from 'peerjs';
 import { motion, AnimatePresence } from 'motion/react';
 import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X } from 'lucide-react';
@@ -184,33 +185,58 @@ export default function App() {
 
   const startBluetoothDiscovery = async () => {
     try {
-      if (!('bluetooth' in navigator)) {
-        setLastError('Web Bluetooth not supported in this browser');
+      // Initialize BLE Client
+      try {
+        await BleClient.initialize();
+      } catch (e) {
+        console.warn('BLE Client initialization skipped or failed');
+      }
+
+      const isBleSupported = await BleClient.isEnabled().catch(() => false);
+
+      if (!isBleSupported) {
+        // Fallback to Simulation for the browser environment
+        setLastError('Switching to Virtual Mesh (Native Hardware Unavailable in Browser)');
+        setTimeout(() => setLastError(null), 3000);
+        
+        // Trigger simulated discovery if not already happening
+        if (step !== 'nearby') {
+           setStep('nearby');
+        }
         return;
       }
       
-      // @ts-ignore
-      const device = await navigator.bluetooth.requestDevice({
-        acceptAllDevices: true
-      });
+      // Real BLE Scanning (Only works in Capacitor native app)
+      await BleClient.requestLEScan(
+        {
+          services: [], // Optionally filter for specific BlueLink mesh service UUID if we had one
+        },
+        (result) => {
+          if (result.device.name?.includes('BlueLink') || result.device.name?.includes('Mesh')) {
+            const newNode = {
+              id: `bluelink-${result.device.deviceId}`,
+              name: result.device.name || 'BT Mesh Node',
+              signal: result.rssi || -70,
+              dist: result.rssi ? Math.abs(result.rssi) / 10 : 5,
+              type: 'unknown' as const
+            };
+            
+            setDiscoveredNodes(prev => {
+               if (prev.find(n => n.id === newNode.id)) return prev;
+               return [newNode, ...prev].sort((a, b) => b.signal - a.signal);
+            });
+          }
+        }
+      );
       
-      if (device) {
-        const newNode = {
-          id: `bluelink-${device.id || Math.random().toString(36).substring(2, 10)}`,
-          name: device.name || 'BT Device',
-          signal: -65,
-          dist: 2,
-          type: 'unknown' as const
-        };
-        
-        setDiscoveredNodes(prev => {
-           if (prev.find(n => n.name === newNode.name)) return prev;
-           return [newNode, ...prev];
-        });
-      }
+      // Stop scanning after 30 seconds
+      setTimeout(async () => {
+        await BleClient.stopLEScan();
+      }, 30000);
+
     } catch (e) {
       console.error('BT Discovery Error:', e);
-      setLastError('Bluetooth discovery cancelled or failed');
+      setLastError('Hardware Node Discovery Failed. Try QR Link.');
     }
   };
 
