@@ -2,6 +2,7 @@ export interface Message {
   id: string;
   senderId: string;
   senderName: string;
+  receiverId?: string;
   text?: string;
   timestamp: number;
   isMe: boolean;
@@ -19,6 +20,14 @@ export interface Contact {
   id: string;
   name: string;
   addedAt: number;
+}
+
+export interface ContactRequest {
+  id: string;
+  senderId: string;
+  senderName: string;
+  timestamp: number;
+  status: 'pending' | 'accepted' | 'declined';
 }
 
 export interface CallRecord {

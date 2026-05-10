@@ -6,9 +6,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Peer, DataConnection } from 'peerjs';
 import { motion, AnimatePresence } from 'motion/react';
-import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed } from 'lucide-react';
+import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Message, PeerData, Contact, CallRecord } from './types';
+import { Html5QrcodeScanner } from 'html5-qrcode';
+import { Message, PeerData, Contact, CallRecord, ContactRequest } from './types';
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -26,13 +27,25 @@ export default function App() {
     if (saved) return saved;
     return `Node-${Math.floor(Math.random() * 9000) + 1000}`;
   });
+  const [peerId, setPeerId] = useState<string>(() => {
+    return localStorage.getItem('bluelink_peer_id') || '';
+  });
+  const [lastError, setLastError] = useState<string | null>(null);
   const [peer, setPeer] = useState<Peer | null>(null);
-  const [peerId, setPeerId] = useState<string>('');
   const [connection, setConnection] = useState<DataConnection | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = localStorage.getItem('bluelink_messages');
+    return saved ? JSON.parse(saved) : [];
+  });
+  useEffect(() => {
+    localStorage.setItem('bluelink_messages', JSON.stringify(messages));
+  }, [messages]);
   const [remoteId, setRemoteId] = useState<string>('');
   const [remoteName, setRemoteName] = useState<string>('');
-  const [step, setStep] = useState<'discovery' | 'chat' | 'account' | 'calls' | 'contacts'>('discovery');
+  const [step, setStep] = useState<'discovery' | 'chat' | 'account' | 'calls' | 'contacts' | 'nearby'>('discovery');
+  const [discoveredNodes, setDiscoveredNodes] = useState<{id: string, name: string, signal: number, dist: number, type: 'known' | 'unknown'}[]>([]);
+  const [isScanningActive, setIsScanningActive] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [showId, setShowId] = useState(false);
   const [copySuccess, setCopySuccess] = useState(false);
@@ -40,12 +53,17 @@ export default function App() {
   const [newContactId, setNewContactId] = useState('');
   const [newContactName, setNewContactName] = useState('');
   const [contactSearch, setContactSearch] = useState('');
+  const [messageText, setMessageText] = useState('');
   
   const [localKeyPair, setLocalKeyPair] = useState<CryptoKeyPair | null>(null);
   const [sharedSecret, setSharedSecret] = useState<CryptoKey | null>(null);
   const [isEncrypted, setIsEncrypted] = useState(false);
   const [contacts, setContacts] = useState<Contact[]>(() => {
     const saved = localStorage.getItem('bluelink_contacts');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [contactRequests, setContactRequests] = useState<ContactRequest[]>(() => {
+    const saved = localStorage.getItem('bluelink_contact_requests');
     return saved ? JSON.parse(saved) : [];
   });
   const contactsRef = useRef<Contact[]>(contacts);
@@ -72,6 +90,9 @@ export default function App() {
     const saved = localStorage.getItem('bluelink_calls');
     return saved ? JSON.parse(saved) : [];
   });
+  useEffect(() => {
+    localStorage.setItem('bluelink_calls', JSON.stringify(callHistory));
+  }, [callHistory]);
   const callTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   const [isRecording, setIsRecording] = useState(false);
@@ -137,14 +158,93 @@ export default function App() {
     initCrypto();
   }, []);
 
+  const handleScanSuccess = useCallback((decodedText: string) => {
+    setRemoteId(decodedText);
+    setIsScanning(false);
+  }, []);
+
+  useEffect(() => {
+    if (isScanning) {
+      const scanner = new Html5QrcodeScanner(
+        "qr-reader",
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        /* verbose= */ false
+      );
+      
+      scanner.render((decodedText: string) => {
+        handleScanSuccess(decodedText);
+      }, (error) => {
+        // Handle scanning error
+      });
+
+      return () => {
+        scanner.clear().catch(err => {
+          // Ignore clear errors if already stopped
+        });
+      };
+    }
+  }, [isScanning, handleScanSuccess]);
+
+  // Simulated Discovery Scan
+  useEffect(() => {
+    if (step === 'nearby') {
+      setIsScanningActive(true);
+      const timer = setTimeout(() => {
+        const potentialNodes = [
+          ...contacts.map(c => ({ id: c.id, name: c.name, signal: -45, dist: 1.2, type: 'known' as const })),
+          { id: 'bluelink-nd-55', name: 'Mesh Relay Delta', signal: -82, dist: 15.4, type: 'unknown' as const },
+          { id: 'bluelink-nd-67', name: 'Remote Terminal', signal: -67, dist: 8.9, type: 'unknown' as const },
+          { id: 'bluelink-nd-94', name: 'Hidden Segment', signal: -94, dist: 24.1, type: 'unknown' as const },
+          { id: 'bluelink-nd-12', name: 'Node-Prime', signal: -52, dist: 3.4, type: 'unknown' as const },
+          { id: 'bluelink-nd-88', name: 'Relay-Alpha', signal: -78, dist: 12.1, type: 'unknown' as const },
+          { id: 'bluelink-nd-03', name: 'Ghost_Net', signal: -89, dist: 19.8, type: 'unknown' as const }
+        ];
+        
+        // Stagger discovery
+        potentialNodes.forEach((node, i) => {
+          setTimeout(() => {
+            setDiscoveredNodes(prev => {
+              if (prev.find(n => n.id === node.id)) return prev;
+              const updated = [...prev, node].sort((a, b) => b.signal - a.signal);
+              return updated;
+            });
+          }, i * 600);
+        });
+      }, 800);
+
+      return () => {
+        clearTimeout(timer);
+        setIsScanningActive(false);
+        setDiscoveredNodes([]);
+      };
+    }
+  }, [step, contacts]);
+
   // Initialize PeerJS
   useEffect(() => {
     if (userName && step !== 'onboarding') {
-      const newPeer = new Peer();
+      let savedId = localStorage.getItem('bluelink_peer_id');
+      
+      // Ensure BlueLink ID prefix for mesh identification
+      if (savedId && !savedId.startsWith('bluelink-')) {
+        savedId = `bluelink-${savedId}`;
+        localStorage.setItem('bluelink_peer_id', savedId);
+      }
+
+      const newPeer = new Peer(savedId || `bluelink-${Math.random().toString(36).substring(2, 10)}`, {
+        config: {
+          iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' },
+            { urls: 'stun:stun1.l.google.com:19302' },
+            { urls: 'stun:stun2.l.google.com:19302' },
+          ]
+        }
+      });
       
       newPeer.on('open', (id) => {
         setPeerId(id);
-        console.log('My peer ID is: ' + id);
+        localStorage.setItem('bluelink_peer_id', id);
+        console.log('My BlueLink Mesh Node ID is: ' + id);
       });
 
       newPeer.on('connection', (conn) => {
@@ -163,9 +263,60 @@ export default function App() {
         setActiveCall(call);
       });
 
-      newPeer.on('error', (err) => {
+      newPeer.on('error', (err: any) => {
         console.error('Peer error:', err);
-        alert('Connection error. Please check your network.');
+        
+        let message = 'An unexpected error occurred.';
+        
+        switch (err.type) {
+          case 'browser-incompatible':
+            message = 'Your browser does not support P2P features.';
+            break;
+          case 'disconnected':
+            message = 'Disconnected from the signalling server.';
+            break;
+          case 'invalid-id':
+            message = 'The Peer ID provided is invalid.';
+            break;
+          case 'invalid-key':
+            message = 'API Key is invalid.';
+            break;
+          case 'network':
+            message = 'Network error. Please check your internet connection.';
+            break;
+          case 'peer-unavailable':
+            message = 'The peer you are trying to connect to is offline or does not exist.';
+            break;
+          case 'ssl-error':
+            message = 'SSL/TLS error. Secure connection could not be established.';
+            break;
+          case 'server-error':
+            message = 'The signalling server is currently unavailable.';
+            break;
+          case 'socket-error':
+            message = 'Socket error. Connection to server failed.';
+            break;
+          case 'socket-closed':
+            message = 'Socket connection closed unexpectedly.';
+            break;
+          case 'unavailable-id':
+            message = 'The Peer ID is already taken.';
+            break;
+          default:
+            if (err.message && err.message.includes('Could not connect to peer')) {
+              message = 'Could not establish connection. The peer may be behind a restrictive firewall or offline.';
+            }
+        }
+
+        setConnectionStatus('disconnected');
+        setLastError(message);
+        
+        if (step === 'chat' && connectionStatus === 'connecting') {
+           setStep('discovery');
+        }
+        
+        // Auto-clear error after 5 seconds
+        setTimeout(() => setLastError(null), 5000);
       });
 
       setPeer(newPeer);
@@ -361,6 +512,10 @@ export default function App() {
   }, [contacts]);
 
   useEffect(() => {
+    localStorage.setItem('bluelink_contact_requests', JSON.stringify(contactRequests));
+  }, [contactRequests]);
+
+  useEffect(() => {
     localStorage.setItem('bluelink_queue', JSON.stringify(queuedMessages));
   }, [queuedMessages]);
 
@@ -370,14 +525,23 @@ export default function App() {
     }
   }, [userName]);
 
-  const connectToPeer = (e: React.FormEvent) => {
-    e.preventDefault();
+  const connectToPeer = (e?: React.FormEvent) => {
+    e?.preventDefault();
     if (!peer || !remoteId.trim()) return;
     
     setStep('chat');
     setRemoteName('Connecting...');
     setConnectionStatus('connecting');
-    const conn = peer.connect(remoteId);
+    setLastError(null);
+    
+    if (!remoteId.startsWith('bluelink-')) {
+       console.warn('Connecting to non-BlueLink node');
+    }
+
+    const conn = peer.connect(remoteId, {
+      reliable: true,
+      connectionPriority: 1
+    });
     setupConnection(conn);
   };
 
@@ -388,6 +552,7 @@ export default function App() {
       id: Math.random().toString(36).substring(7),
       senderId: peerId,
       senderName: userName,
+      receiverId: connection?.peer || remoteId,
       text: text,
       timestamp: Date.now(),
       isMe: true,
@@ -447,6 +612,7 @@ export default function App() {
         id: Math.random().toString(36).substring(7),
         senderId: peerId,
         senderName: userName,
+        receiverId: connection.peer,
         timestamp: Date.now(),
         isMe: true,
         status: 'sent',
@@ -574,23 +740,8 @@ export default function App() {
       };
       setCallHistory(prev => {
         const updated = [newCall, ...prev].slice(0, 50);
-        localStorage.setItem('bluelink_calls', JSON.stringify(updated));
         return updated;
       });
-    }
-
-    // Add call summary message if it was an active call
-    if (callStatus === 'active' && callDuration > 0) {
-      const summaryMsg: Message = {
-        id: Math.random().toString(36).substring(7),
-        senderId: 'system',
-        senderName: 'System',
-        text: `Audio call ended • ${formatDuration(callDuration)}`,
-        timestamp: Date.now(),
-        isMe: false,
-        status: 'read'
-      };
-      setMessages(prev => [...prev, summaryMsg]);
     }
 
     if (localStream) {
@@ -601,6 +752,7 @@ export default function App() {
     setRemoteStream(null);
     setCallStatus('idle');
     setIsIncomingCall(false);
+    setIsMuted(false);
     setCallDuration(0);
   };
 
@@ -724,6 +876,41 @@ export default function App() {
     setContacts(contacts.filter(c => c.id !== id));
   };
 
+  const sendContactRequest = (id: string, name: string) => {
+    if (contacts.find(c => c.id === id)) return;
+    if (contactRequests.find(r => r.senderId === id)) return;
+
+    const newRequest: ContactRequest = {
+      id: Math.random().toString(36).substring(7),
+      senderId: id,
+      senderName: name,
+      timestamp: Date.now(),
+      status: 'pending'
+    };
+    
+    // In a real app, we'd send a "system" P2P message to the target node
+    setContactRequests(prev => [newRequest, ...prev]);
+  };
+
+  const handleContactRequest = (requestId: string, status: 'accepted' | 'declined') => {
+    const request = contactRequests.find(r => r.id === requestId);
+    if (!request) return;
+
+    if (status === 'accepted') {
+      const newContact: Contact = {
+        id: request.senderId,
+        name: request.senderName,
+        addedAt: Date.now()
+      };
+      setContacts(prev => {
+        if (prev.some(c => c.id === newContact.id)) return prev;
+        return [...prev, newContact];
+      });
+    }
+
+    setContactRequests(prev => prev.filter(r => r.id !== requestId));
+  };
+
   const handleAddContact = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newContactId.trim() || !newContactName.trim()) return;
@@ -750,8 +937,12 @@ export default function App() {
     setRemoteName(name);
     setStep('chat');
     setConnectionStatus('connecting');
+    setLastError(null);
     if (!peer) return;
-    const conn = peer.connect(id);
+    const conn = peer.connect(id, {
+      reliable: true,
+      connectionPriority: 1
+    });
     setupConnection(conn);
   };
 
@@ -761,110 +952,169 @@ export default function App() {
   );
 
   return (
-    <div className="flex flex-col h-screen max-h-screen bg-app-bg font-sans text-gray-100 overflow-hidden">
-      {/* Top Navigation Bar / BlueLink Header */}
-      <header className="flex items-center justify-between px-4 h-16 bg-app-sec border-b border-white/5 z-30 shadow-sm">
-        <div className="flex items-center gap-3 shrink-0">
-          {step === 'chat' && (
-            <button 
-              onClick={() => setStep('discovery')}
-              className="p-1 text-gray-400 hover:text-white"
-            >
-              <ChevronLeft size={24} />
-            </button>
-          )}
-          <div className="w-10 h-10 rounded-full bg-brand-blue flex items-center justify-center overflow-hidden">
-            {step === 'chat' ? (
-              <div className="text-white font-bold">{remoteName.substring(0, 1).toUpperCase()}</div>
-            ) : (
-              <Bluetooth size={20} className="text-white" />
+    <div className="flex flex-col h-screen max-h-screen bg-black font-sans text-gray-100 overflow-hidden items-center justify-center">
+      <div className="flex flex-col w-full h-full max-w-lg bg-app-bg relative overflow-hidden shadow-2xl md:border-x md:border-white/5">
+        {/* Top Navigation Bar / BlueLink Header */}
+        <header className="flex items-center justify-between px-4 h-16 bg-app-sec border-b border-white/5 z-30 shadow-sm shrink-0">
+          <div className="flex items-center gap-3 shrink-0">
+            {step === 'chat' && (
+              <button 
+                onClick={() => setStep('discovery')}
+                className="p-1 text-gray-400 hover:text-white"
+              >
+                <ChevronLeft size={24} />
+              </button>
             )}
-          </div>
-          <div className="flex flex-col">
-            <h1 className="text-sm md:text-base font-semibold truncate max-w-[150px] md:max-w-none">
-              {step === 'chat' ? remoteName : (step === 'account' ? 'Profile' : (step === 'calls' ? 'Calls' : (step === 'contacts' ? 'Contacts' : 'BlueLink')))}
-            </h1>
-            <div className="flex items-center gap-1.5">
-              <span className={`text-[10px] ${
-                connectionStatus === 'connected' ? 'text-brand-blue' : 'text-gray-400'
-              }`}>
-                {step === 'chat' ? (connectionStatus === 'connected' ? 'online' : 'connecting...') : 'P2P Mesh Active'}
-              </span>
+            <div className={`w-10 h-10 rounded-full ${step === 'chat' ? 'bg-brand-blue' : 'bg-brand-blue/10 border border-brand-blue/20'} flex items-center justify-center overflow-hidden`}>
+              {step === 'chat' ? (
+                <div className="text-white font-bold">{remoteName.substring(0, 1).toUpperCase()}</div>
+              ) : (
+                <Bluetooth size={20} className="text-brand-blue" />
+              )}
+            </div>
+            <div className="flex flex-col">
+              {step === 'chat' ? (
+                <>
+                  <h1 className="text-sm font-semibold truncate max-w-[120px]">{remoteName}</h1>
+                  <span className={`text-[10px] ${connectionStatus === 'connected' ? 'text-brand-blue' : 'text-gray-400'}`}>
+                    {connectionStatus === 'connected' ? 'online' : 'connecting...'}
+                  </span>
+                </>
+              ) : (
+                <div className="flex flex-col">
+                  <h1 className="text-lg font-bold text-gray-100 italic tracking-tight leading-none">BlueLink<span className="text-brand-blue">.</span></h1>
+                  <span className="text-[9px] font-bold text-gray-500 uppercase tracking-[0.2em] leading-none mt-0.5">
+                    {step === 'account' ? 'Profile' : (step === 'calls' ? 'Calls' : (step === 'contacts' ? 'Contacts' : (step === 'nearby' ? 'Discovery' : 'Direct P2P')))}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          {step === 'chat' && callStatus === 'idle' && (
-            <button onClick={startCall} className="text-gray-400 hover:text-white">
-              <Phone size={20} />
+          
+          <div className="flex items-center gap-1">
+            {step === 'chat' ? (
+              <>
+                {callStatus === 'idle' && (
+                  <button onClick={startCall} className="p-2 text-gray-400 hover:text-white transition-colors">
+                    <Phone size={18} />
+                  </button>
+                )}
+              </>
+            ) : (
+              <div className="flex items-center gap-2 mr-1">
+                <div className="p-1.5 px-2.5 border border-white/10 rounded-xl flex items-center gap-2 bg-white/5">
+                   <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
+                   <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Online</span>
+                </div>
+              </div>
+            )}
+            <button 
+              onClick={() => setStep('account')} 
+              className={`p-2 rounded-xl transition-all ${step === 'account' ? 'text-brand-blue bg-brand-blue/10' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+            >
+              <User size={18} />
             </button>
-          )}
-          <button onClick={() => setShowId(!showId)} className="text-gray-400 hover:text-white">
-            <QrCode size={20} />
-          </button>
-        </div>
-      </header>
+          </div>
+        </header>
 
-      {/* Main Content Area */}
-      <main className="flex-1 flex overflow-hidden relative">
-        <AnimatePresence mode="wait">
-          {step === 'account' && (
+        {/* Main Content Area */}
+        <main className="flex-1 flex flex-col overflow-hidden relative">
+          <AnimatePresence>
+            {lastError && (
+              <motion.div 
+                initial={{ opacity: 0, y: -20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                className="absolute top-4 left-4 right-4 z-50 p-4 bg-red-500/90 backdrop-blur-md text-white rounded-2xl shadow-xl flex items-center gap-3 border border-red-400/20"
+              >
+                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0">
+                  <X size={16} />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold uppercase tracking-widest opacity-70">Connection Error</p>
+                  <p className="text-xs font-medium truncate">{lastError}</p>
+                </div>
+                <button onClick={() => setLastError(null)} className="p-1 hover:bg-white/10 rounded-lg">
+                  <X size={14} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence mode="wait">
+            {step === 'account' && (
             <motion.div
               key="account"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex-1 flex flex-col items-center bg-app-bg p-6 overflow-y-auto"
+              className="flex-1 flex flex-col bg-app-bg px-6 py-8 overflow-y-auto"
             >
-              <div className="w-full max-w-md space-y-8">
-                <div className="flex flex-col items-center gap-4">
-                  <div className="w-40 h-40 rounded-full bg-brand-blue flex items-center justify-center relative overflow-hidden group">
-                    <User size={80} className="text-white/50" />
-                    <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                      <Mic size={24} className="text-white" />
-                    </div>
+              <div className="flex flex-col items-center text-center space-y-6">
+                <div className="relative group">
+                  <div className="w-24 h-24 rounded-full bg-brand-blue flex items-center justify-center text-3xl font-bold text-white shadow-2xl shadow-brand-blue/30 border-4 border-white/10">
+                    {userName.substring(0, 1).toUpperCase()}
                   </div>
-                  <div className="w-full space-y-4">
-                    <div className="space-y-1">
-                      <label className="text-brand-blue text-xs font-semibold px-1">Your Name</label>
-                      <input 
-                        type="text" 
-                        value={userName} 
-                        onChange={(e) => setUserName(e.target.value)}
-                        className="w-full bg-transparent border-b border-brand-blue py-2 text-white focus:outline-none"
+                  <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-black border-2 border-white/10 rounded-full flex items-center justify-center">
+                    <div className="w-2.5 h-2.5 rounded-full bg-brand-blue animate-pulse" />
+                  </div>
+                </div>
+                
+                <div>
+                  <h2 className="text-2xl font-bold text-white tracking-tight">{userName}</h2>
+                  <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-gray-500 mt-1">Mesh Node Identity</p>
+                </div>
+
+                {/* Identity QR Section */}
+                <div className="w-full bg-app-sec p-6 rounded-[32px] border border-white/5 shadow-2xl space-y-4">
+                  <div className="flex flex-col items-center gap-4">
+                    <div className="p-4 bg-white rounded-3xl shadow-inner">
+                      <QRCodeSVG 
+                        value={peerId} 
+                        size={160}
+                        level="H"
+                        includeMargin={true}
                       />
                     </div>
-                    <div className="space-y-1">
-                      <label className="text-brand-blue text-xs font-semibold px-1">About / Peer ID</label>
-                      <div className="flex items-center gap-2 text-gray-400 text-sm py-2 break-all">
-                        {peerId}
-                        <button onClick={copyToClipboard} className="text-brand-blue shrink-0"><Copy size={16} /></button>
+                    <div className="space-y-1 text-center w-full">
+                      <p className="text-[11px] font-bold text-brand-blue uppercase tracking-widest">Digital Signature</p>
+                      <div className="flex items-center gap-2 px-3 py-3 bg-black/40 border border-white/5 rounded-2xl w-full">
+                        <code className="text-[11px] font-mono text-gray-400 truncate flex-1">{peerId}</code>
+                        <button 
+                          onClick={() => {
+                            navigator.clipboard.writeText(peerId);
+                            setCopySuccess(true);
+                            setTimeout(() => setCopySuccess(false), 2000);
+                          }}
+                          className="text-brand-blue hover:text-white transition-colors"
+                        >
+                          {copySuccess ? <Check size={16} /> : <Copy size={16} />}
+                        </button>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="space-y-4">
-                  <h3 className="text-brand-blue text-xs font-bold uppercase tracking-widest">Settings</h3>
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between p-4 bg-app-sec rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <Bluetooth size={20} className="text-gray-400" />
-                        <span>Mesh Connectivity</span>
-                      </div>
-                      <div className="w-10 h-5 bg-brand-blue rounded-full relative">
-                        <div className="absolute right-0.5 top-0.5 w-4 h-4 bg-white rounded-full"></div>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between p-4 bg-app-sec rounded-xl">
-                      <div className="flex items-center gap-3">
-                        <QrCode size={20} className="text-gray-400" />
-                        <span>Identity QR</span>
-                      </div>
-                      <ChevronLeft size={16} className="text-gray-600 rotate-180" />
-                    </div>
+                <div className="w-full space-y-3 pb-8">
+                  <div className="space-y-1 text-left">
+                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Display Name</label>
+                    <input 
+                      type="text" 
+                      value={userName} 
+                      onChange={(e) => setUserName(e.target.value)}
+                      className="w-full bg-app-sec border border-white/5 rounded-2xl py-4 px-4 text-white focus:outline-none focus:border-brand-blue/50 transition-colors font-bold"
+                    />
                   </div>
+                  
+                  <button 
+                    onClick={() => {
+                      localStorage.clear();
+                      window.location.reload();
+                    }}
+                    className="w-full py-4 bg-red-500/5 hover:bg-red-500/10 border border-red-500/10 rounded-2xl text-red-500 font-bold text-[10px] uppercase tracking-widest transition-all mt-4"
+                  >
+                    Wipe Node History
+                  </button>
                 </div>
               </div>
             </motion.div>
@@ -877,24 +1127,51 @@ export default function App() {
               exit={{ opacity: 0 }}
               className="flex-1 flex flex-col bg-app-bg"
             >
-              <div className="p-4 border-b border-white/5 bg-app-sec flex items-center justify-between">
-                <h2 className="text-xl font-bold text-gray-100">Contacts</h2>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 mr-1">{contacts.length} Contacts</span>
-                  <button onClick={() => setShowAddContact(true)} className="p-2 text-brand-blue hover:bg-brand-blue/10 rounded-full transition-colors" title="Add Contact">
-                    <UserPlus size={20} />
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="text-[10px] font-bold text-brand-blue uppercase tracking-widest leading-none">Address Book</h2>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{contacts.length} Peers</span>
+                    <button onClick={() => setShowAddContact(true)} className="flex items-center gap-1 text-[10px] font-bold text-brand-blue uppercase hover:underline" title="Add Contact">
+                      <UserPlus size={12} /> Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* Instant Link Section moved here */}
+                <div className="bg-app-sec p-3 rounded-2xl border border-white/5 shadow-xl space-y-3 mb-4">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Enter Peer ID for Direct Link"
+                      value={remoteId}
+                      onChange={(e) => setRemoteId(e.target.value)}
+                      className="w-full bg-black/40 border border-white/5 rounded-xl py-3 pl-4 pr-10 text-sm font-mono text-gray-200 outline-none focus:border-brand-blue/50 transition-colors"
+                    />
+                    <button 
+                      onClick={() => setIsScanning(true)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-blue hover:text-white transition-colors"
+                    >
+                      <Scan size={20} />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => connectToPeer()}
+                    disabled={!remoteId.trim() || connectionStatus === 'connecting'}
+                    className="w-full bg-brand-blue text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-brand-blue/20 disabled:opacity-50 disabled:shadow-none active:scale-[0.98] transition-all"
+                  >
+                    {connectionStatus === 'connecting' ? 'Establishing Tunnel...' : 'Establish Direct Link'}
+                    <Send size={16} />
                   </button>
                 </div>
-              </div>
-              
-              <div className="p-4">
+                
                 <div className="relative group">
                   <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
                     <Search size={18} />
                   </div>
                   <input 
                     type="text" 
-                    placeholder="Search contacts..." 
+                    placeholder="Search by name or ID..." 
                     value={contactSearch}
                     onChange={(e) => setContactSearch(e.target.value)}
                     className="w-full bg-app-sec rounded-xl py-2.5 pl-10 pr-4 text-sm text-gray-200 outline-none placeholder:text-gray-500 border border-white/5"
@@ -903,15 +1180,56 @@ export default function App() {
               </div>
 
               <div className="flex-1 overflow-y-auto chat-scroll px-2">
-                {contacts.length === 0 ? (
+                {/* Pending Requests Section */}
+                {contactRequests.length > 0 && (
+                  <div className="px-2 pb-6 pt-2">
+                    <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                       <Radio size={10} className="text-brand-blue animate-pulse" />
+                       Incoming Link Requests
+                    </h3>
+                    <div className="space-y-2">
+                      {contactRequests.map(request => (
+                        <div key={request.id} className="flex items-center justify-between p-4 bg-brand-blue/[0.03] border border-brand-blue/20 rounded-[24px] shadow-sm animate-in fade-in slide-in-from-left-4 transition-all hover:bg-brand-blue/5">
+                          <div className="flex items-center gap-4 flex-1 min-w-0">
+                             <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-brand-blue font-bold text-sm uppercase shrink-0 border border-brand-blue/20">
+                                {request.senderName.substring(0, 1)}
+                             </div>
+                             <div className="truncate">
+                                <div className="text-sm font-bold text-gray-100 truncate">{request.senderName}</div>
+                                <div className="text-[9px] font-mono text-gray-500 mt-0.5 truncate uppercase tracking-widest">ID: {request.senderId.substring(0, 12)}</div>
+                             </div>
+                          </div>
+                          <div className="flex items-center gap-2 ml-3">
+                             <button 
+                               onClick={() => handleContactRequest(request.id, 'accepted')}
+                               className="p-2.5 bg-brand-blue text-white rounded-xl shadow-lg shadow-brand-blue/20 active:scale-95 transition-all"
+                               title="Authorize Node"
+                             >
+                               <Check size={18} />
+                             </button>
+                             <button 
+                               onClick={() => handleContactRequest(request.id, 'declined')}
+                               className="p-2.5 bg-red-500/5 text-red-500 hover:bg-red-500/10 rounded-xl active:scale-95 transition-all border border-red-500/10"
+                               title="Block Signature"
+                             >
+                               <X size={18} />
+                             </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {contacts.length === 0 && contactRequests.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-center px-8 opacity-40">
                      <Users size={48} className="text-gray-500 mb-4" />
-                     <p className="text-sm">No contacts saved yet.</p>
+                     <p className="text-sm">No peered nodes found.</p>
                      <button 
                        onClick={() => setShowAddContact(true)}
                        className="mt-4 text-brand-blue font-bold text-sm"
                      >
-                       Add Your First Contact
+                       Add Peer Identity
                      </button>
                   </div>
                 ) : (
@@ -919,25 +1237,45 @@ export default function App() {
                     {filteredContacts.map(contact => (
                       <div 
                         key={contact.id}
-                        className="flex items-center gap-3 p-4 hover:bg-app-sec cursor-pointer transition-colors border-b border-white/5 rounded-xl mx-2 group"
-                        onClick={() => connectToContact(contact.id, contact.name)}
+                        className="flex items-center gap-3 p-4 bg-app-sec/20 border border-white/5 rounded-xl mx-2 mb-2 group"
                       >
-                        <div className="w-12 h-12 rounded-full bg-brand-blue/20 flex items-center justify-center text-lg font-bold text-brand-blue">
+                        <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-lg font-bold text-brand-blue/60">
                           {contact.name.substring(0, 1).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-gray-200 truncate">{contact.name}</h3>
-                          <p className="text-xs text-gray-500 truncate font-mono">{contact.id}</p>
+                          <h3 className="font-bold text-gray-200 truncate">{contact.name}</h3>
+                          <div className="flex items-center gap-2">
+                            <p className="text-[10px] text-gray-500 truncate font-mono bg-black/30 px-2 py-0.5 rounded border border-white/5">{contact.id}</p>
+                            <button 
+                              onClick={() => {
+                                navigator.clipboard.writeText(contact.id);
+                                setCopySuccess(true);
+                                setTimeout(() => setCopySuccess(false), 2000);
+                              }}
+                              className="text-gray-600 hover:text-brand-blue transition-colors"
+                            >
+                              <Copy size={12} />
+                            </button>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-2">
                           <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeContact(contact.id);
+                            onClick={() => {
+                              setRemoteId(contact.id);
+                              setStep('discovery');
+                              // This will move them to the Chats section where they can initiate the link
                             }}
-                            className="p-2 text-red-500/50 hover:text-red-500 hover:bg-red-500/10 rounded-full transition-all"
+                            className="p-2 text-brand-blue hover:bg-brand-blue/10 rounded-lg transition-all"
+                            title="Open in Chats"
                           >
-                            <Trash2 size={16} />
+                            <MessageSquare size={18} />
+                          </button>
+                          <button 
+                            onClick={() => removeContact(contact.id)}
+                            className="p-2 text-red-500/30 hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-all"
+                            title="Remove Peer"
+                          >
+                            <Trash2 size={18} />
                           </button>
                         </div>
                       </div>
@@ -954,94 +1292,230 @@ export default function App() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="flex-1 flex flex-col md:flex-row relative bg-app-bg"
+              className="flex-1 flex flex-col bg-app-bg overflow-hidden"
             >
-              <aside className={`
-                fixed inset-y-0 left-0 z-40 w-full md:w-96 bg-app-bg border-r border-white/5 transition-transform duration-300 md:relative md:translate-x-0
-                ${isSidebarOpen || window.innerWidth >= 768 ? 'translate-x-0' : '-translate-x-full'}
-              `}>
-                <div className="flex flex-col h-full">
-                  <div className="p-4 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h2 className="text-xl font-bold text-gray-100">Chats</h2>
-                      <div className="flex gap-2">
-                         <button onClick={() => setStep('calls')} title="Calls" className="p-2 text-gray-400 hover:text-white transition-colors"><Phone size={20} /></button>
-                      </div>
-                    </div>
-                    <div className="relative group">
-                      <div className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500">
-                        <Search size={18} />
-                      </div>
-                      <input 
-                        type="text" 
-                        placeholder="Search or start new chat" 
-                        value={contactSearch}
-                        onChange={(e) => setContactSearch(e.target.value)}
-                        className="w-full bg-app-sec rounded-xl py-2.5 pl-10 pr-4 text-sm text-gray-200 outline-none placeholder:text-gray-500"
-                      />
-                    </div>
+              <div className="flex-1 overflow-y-auto chat-scroll p-4 space-y-6">
+                {/* Recent Chats Section */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between px-1">
+                    <h3 className="text-[10px] font-bold text-brand-blue uppercase tracking-widest leading-none">Active Conversations</h3>
+                    <button 
+                      onClick={() => {
+                        if (confirm('Clear all chat history?')) {
+                          setMessages([]);
+                        }
+                      }}
+                      className="text-[10px] text-gray-500 font-bold hover:text-red-500 transition-colors"
+                    >
+                      Clear
+                    </button>
                   </div>
-                  <div className="flex-1 overflow-y-auto chat-scroll pb-20 md:pb-0">
-                    <div className="px-4 py-3 bg-brand-blue/10 border-y border-white/5 mx-2 rounded-xl mb-4">
-                        <p className="text-[10px] font-bold text-brand-blue uppercase tracking-widest mb-2">Connect New Peer</p>
-                        <div className="flex gap-2">
-                           <input 
-                             type="text" 
-                             placeholder="Node Signature" 
-                             value={remoteId}
-                             onChange={(e) => setRemoteId(e.target.value)}
-                             className="flex-1 bg-app-sec rounded-lg px-3 py-2 text-xs text-white outline-none border border-white/5 focus:border-brand-blue/50"
-                           />
-                           <button 
-                             onClick={connectToPeer}
-                             disabled={!remoteId.trim()}
-                             className="bg-brand-blue text-white px-4 py-2 rounded-lg disabled:opacity-50 font-bold text-xs"
-                           >
-                             Connect
-                           </button>
+                  <div className="space-y-1 pb-4">
+                    {messages.filter(m => m.senderId !== 'system').length === 0 ? (
+                      <div className="bg-app-sec/30 border border-dashed border-white/5 rounded-2xl py-12 text-center px-6">
+                        <div className="w-12 h-12 bg-app-sec rounded-full flex items-center justify-center mx-auto mb-4">
+                          <MessageSquare size={20} className="text-gray-600" />
                         </div>
-                    </div>
-                    {contacts.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-20 text-center px-8 opacity-40">
-                         <Bluetooth size={48} className="text-gray-500 mb-4" />
-                         <p className="text-sm">No chats found.<br/>Link a peer to begin.</p>
+                        <h3 className="text-sm font-bold text-gray-400 mb-1">Wireless Silence</h3>
+                        <p className="text-[10px] text-gray-600 uppercase tracking-wider font-bold">Encrypted chat nodes will appear here</p>
                       </div>
                     ) : (
-                      filteredContacts.map(contact => (
-                        <div 
-                          key={contact.id}
-                          className="flex items-center gap-3 p-4 hover:bg-app-sec cursor-pointer transition-colors border-b border-white/5"
-                          onClick={() => {
-                            connectToContact(contact.id, contact.name);
-                            setIsSidebarOpen(false);
-                          }}
-                        >
-                          <div className="w-12 h-12 rounded-full bg-brand-blue/20 flex items-center justify-center text-lg font-bold text-brand-blue">
-                            {contact.name.substring(0, 1).toUpperCase()}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex justify-between items-center mb-0.5">
-                              <h3 className="font-semibold text-gray-200 truncate">{contact.name}</h3>
-                              <span className="text-[10px] text-gray-500">{new Date(contact.addedAt).toLocaleDateString()}</span>
-                            </div>
-                            <div className="flex items-center gap-1 text-xs text-gray-500 truncate">
-                              <Check size={14} className="text-brand-blue" />
-                              <span className="truncate">{contact.id}</span>
-                            </div>
-                          </div>
-                        </div>
-                      ))
+                      <div className="space-y-2">
+                        {/* Get unique participants from messages, excluding system messages */}
+                        {(Array.from(new Set(messages
+                          .filter(m => m.senderId !== 'system')
+                          .map(m => m.isMe ? (m as any).receiverId || (m as any).targetId : m.senderId))) as string[])
+                          .filter(id => id && id !== peerId && id !== 'system')
+                          .map(id => {
+                            const contact = contacts.find(c => c.id === id);
+                            const threadMessages = messages.filter(m => m.senderId === id || (m.isMe && ((m as any).receiverId === id || (m as any).targetId === id)));
+                            const lastMsg = threadMessages[threadMessages.length - 1];
+                            
+                            if (!lastMsg) return null;
+
+                            return (
+                              <div 
+                                key={id}
+                                onClick={() => connectToContact(id, contact?.name || `Node-${id.substring(0,4)}`)}
+                                className="flex items-center gap-3 p-4 bg-app-sec/40 hover:bg-app-sec/60 rounded-2xl border border-white/5 cursor-pointer transition-all group active:scale-[0.98]"
+                              >
+                                <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-lg font-bold text-white relative">
+                                  {(contact?.name || 'U').substring(0, 1).toUpperCase()}
+                                  {(connection?.peer === id && connectionStatus === 'connected') && (
+                                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-brand-blue border-2 border-app-bg rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                                  )}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center justify-between mb-0.5">
+                                    <h4 className="font-bold text-gray-100 truncate">{contact?.name || `Node-${id.substring(0,8)}`}</h4>
+                                    <span className="text-[10px] text-gray-600 font-mono">
+                                      {new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                  </div>
+                                  <p className="text-[11px] text-gray-500 truncate italic flex items-center gap-1">
+                                    {lastMsg.isMe && <span className="text-brand-blue font-bold tracking-tighter mr-0.5">YOU:</span>}
+                                    {lastMsg.file ? (
+                                      <span className="flex items-center gap-1"><FileText size={10} /> Attachment</span>
+                                    ) : (
+                                      lastMsg.text
+                                    )}
+                                  </p>
+                                </div>
+                                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                                   <ChevronLeft size={16} className="text-gray-600 rotate-180" />
+                                </div>
+                              </div>
+                            );
+                          })
+                        }
+                      </div>
                     )}
                   </div>
                 </div>
-              </aside>
-              <div className="hidden md:flex flex-1 flex-col items-center justify-center bg-app-bg p-12 text-center relative overflow-hidden">
-                 <div className="absolute inset-0 opacity-[0.02] pointer-events-none" style={{ backgroundImage: 'url("https://www.transparenttextures.com/patterns/cartographer.png")' }}></div>
-                 <div className="w-24 h-24 bg-app-sec rounded-full flex items-center justify-center mb-8 border border-white/10">
-                    <MessageSquare size={48} className="text-gray-600" />
+              </div>
+            </motion.div>
+          )}
+
+          {step === 'nearby' && (
+            <motion.div
+              key="nearby"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="flex-1 flex flex-col bg-app-bg overflow-hidden"
+            >
+              {/* Radar Header */}
+              <div className="relative h-64 flex flex-col items-center justify-center overflow-hidden border-b border-white/5">
+                <div className="absolute inset-0 flex items-center justify-center opacity-20">
+                   <div className="w-[100px] h-[100px] border border-brand-blue rounded-full" />
+                   <div className="absolute w-[200px] h-[200px] border border-brand-blue/40 rounded-full" />
+                   <div className="absolute w-[300px] h-[300px] border border-brand-blue/20 rounded-full" />
+                   <div className="absolute w-[400px] h-[400px] border border-brand-blue/10 rounded-full" />
+                   {/* Scanning Beam */}
+                   <motion.div 
+                     animate={{ rotate: 360 }} 
+                     transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                     className="absolute w-[200px] h-[200px] bg-gradient-to-tr from-brand-blue/40 to-transparent origin-center left-1/2 top-1/2 -ml-[100px] -mt-[100px] rounded-full"
+                     style={{ clipPath: 'polygon(50% 50%, 100% 0, 100% 40%)' }}
+                   />
+                </div>
+
+                <div className="relative z-10 flex flex-col items-center">
+                  <div className="w-16 h-16 bg-brand-blue/20 rounded-full flex items-center justify-center border border-brand-blue/30 backdrop-blur-md mb-4">
+                    <Radio size={32} className="text-brand-blue animate-pulse" />
+                  </div>
+                  <h2 className="text-lg font-bold text-white tracking-widest uppercase">BlueLink Mesh Browser</h2>
+                  <div className="flex items-center gap-2 mt-1">
+                    <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
+                    <span className="text-[9px] font-bold text-gray-500 uppercase tracking-[0.3em]">Decoding Mesh Packets</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex-1 overflow-y-auto chat-scroll p-4 space-y-6">
+                 {/* Discovered Peer List */}
+                 <div className="space-y-3">
+                    <div className="flex items-center justify-between px-2">
+                       <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em]">{discoveredNodes.length} Secure Signatures</h3>
+                       <Activity size={12} className="text-brand-blue animate-pulse" />
+                    </div>
+                    
+                    <AnimatePresence mode="popLayout">
+                      {discoveredNodes.length === 0 ? (
+                        <motion.div 
+                          key="scanning-placeholder"
+                          initial={{ opacity: 0 }}
+                          animate={{ opacity: 1 }}
+                          className="p-8 text-center"
+                        >
+                          <div className="inline-block px-3 py-1 bg-white/5 border border-white/5 rounded-full text-[9px] font-bold text-gray-600 uppercase tracking-widest animate-pulse">
+                             Optimizing Signal Floor...
+                          </div>
+                        </motion.div>
+                      ) : (
+                        discoveredNodes.map((node, idx) => (
+                          <motion.div 
+                            key={node.id}
+                            initial={{ opacity: 0, x: -20, scale: 0.95 }}
+                            animate={{ opacity: 1, x: 0, scale: 1 }}
+                            className="group relative"
+                          >
+                               <div 
+                                 className="flex items-center justify-between p-4 bg-white/[0.03] border border-white/5 rounded-3xl hover:bg-white/[0.08] transition-all backdrop-blur-sm group"
+                               >
+                                  <div className="flex items-center gap-4 flex-1 min-w-0" onClick={() => {
+                                      setRemoteId(node.id);
+                                      if (node.type === 'known') setRemoteName(node.name);
+                                      setStep('chat');
+                                   }}>
+                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${node.type === 'known' ? 'bg-brand-blue/20 text-brand-blue' : 'bg-gray-800 text-gray-500'}`}>
+                                         {node.name.substring(0, 1).toUpperCase()}
+                                      </div>
+                                      <div className="text-left truncate">
+                                         <div className="flex items-center gap-2">
+                                           <div className="text-sm font-bold text-gray-200 truncate">{node.name}</div>
+                                           {node.type === 'known' && <div className="px-1.5 py-0.5 bg-brand-blue/10 text-[8px] font-black text-brand-blue uppercase rounded shrink-0">Linked</div>}
+                                         </div>
+                                         <div className="text-[9px] font-mono text-gray-600 mt-0.5 truncate">UID: {node.id.substring(0, 16)}...</div>
+                                      </div>
+                                   </div>
+                                   
+                                  <div className="flex items-center gap-3">
+                                     <div className="text-right hidden sm:block">
+                                         <div className="text-[10px] font-mono font-bold text-brand-blue">{node.signal} dBm</div>
+                                         <div className="text-[9px] text-gray-600 font-bold uppercase tracking-tighter">~{node.dist}m</div>
+                                      </div>
+                                      
+                                      {node.type === 'unknown' && (
+                                        <button 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            sendContactRequest(node.id, node.name);
+                                          }}
+                                          disabled={contactRequests.some(r => r.senderId === node.id)}
+                                          className={`p-2.5 rounded-xl transition-all active:scale-95 ${
+                                            contactRequests.some(r => r.senderId === node.id)
+                                              ? 'bg-green-500/10 text-green-500'
+                                              : 'bg-brand-blue/10 text-brand-blue hover:bg-brand-blue hover:text-white'
+                                          }`}
+                                          title={contactRequests.some(r => r.senderId === node.id) ? "Request Sent" : "Send Link Request"}
+                                        >
+                                          {contactRequests.some(r => r.senderId === node.id) ? <Check size={16} /> : <UserPlus size={16} />}
+                                        </button>
+                                      )}
+                                   </div>
+                               </div>
+                             {/* Connection status line */}
+                             <div className="absolute left-9 -bottom-3 h-3 w-px bg-gradient-to-b from-white/10 to-transparent last:hidden" />
+                          </motion.div>
+                        ))
+                      )}
+                    </AnimatePresence>
+
+                    {isScanningActive && (
+                      <div className="flex items-center justify-between p-4 bg-app-sec/10 border border-dashed border-white/5 rounded-3xl animate-pulse">
+                         <div className="flex items-center gap-4">
+                            <div className="w-10 h-10 rounded-full bg-gray-800/30 flex items-center justify-center">
+                               <Radio size={14} className="text-gray-700" />
+                            </div>
+                            <div className="text-left">
+                               <div className="w-24 h-2 bg-gray-800 rounded-full mb-2" />
+                               <div className="w-32 h-1.5 bg-gray-800/50 rounded-full" />
+                            </div>
+                         </div>
+                         <div className="w-10 h-4 bg-gray-800/30 rounded-lg" />
+                      </div>
+                    )}
                  </div>
-                 <h2 className="text-2xl font-bold mb-2">BlueLink P2P Mesh</h2>
-                 <p className="text-gray-500 max-w-sm">Direct, encrypted device-to-device messaging. No servers required.</p>
+
+                 <div className="flex flex-col items-center gap-2 pt-6 pb-20">
+                    <div className="flex items-center gap-2">
+                       <span className="w-1 h-1 bg-brand-blue rounded-full animate-bounce [animation-delay:-0.3s]" />
+                       <span className="w-1 h-1 bg-brand-blue rounded-full animate-bounce [animation-delay:-0.15s]" />
+                       <span className="w-1 h-1 bg-brand-blue rounded-full animate-bounce" />
+                    </div>
+                    <p className="text-[9px] text-gray-700 font-bold uppercase tracking-[0.4em]">Mesh Integrity Secure</p>
+                 </div>
               </div>
             </motion.div>
           )}
@@ -1054,41 +1528,66 @@ export default function App() {
               exit={{ opacity: 0 }}
               className="flex-1 flex flex-col bg-app-bg"
             >
-              <div className="p-4 border-b border-white/5 bg-app-sec">
-                <h2 className="text-xl font-bold text-gray-100">Calls</h2>
+              <div className="p-4 space-y-3">
+                <div className="flex items-center justify-between px-1">
+                  <h2 className="text-[10px] font-bold text-brand-blue uppercase tracking-widest leading-none">Recent Activity</h2>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[10px] text-gray-500 font-bold uppercase tracking-tighter">{callHistory.length} Sessions</span>
+                    <button 
+                      onClick={() => {
+                        if (confirm('Clear all call records?')) setCallHistory([]);
+                      }} 
+                      className="text-[10px] font-bold text-gray-500 uppercase hover:text-red-500 transition-colors"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                </div>
               </div>
+
               <div className="flex-1 overflow-y-auto chat-scroll px-2 py-2">
                 {callHistory.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-20 text-center px-8 opacity-40">
-                    <div className="w-20 h-20 bg-app-sec rounded-full flex items-center justify-center mb-6">
-                      <Phone size={40} className="text-gray-500" />
+                    <div className="w-16 h-16 bg-app-sec rounded-full flex items-center justify-center mb-6 border border-white/5">
+                      <Phone size={32} className="text-gray-600" />
                     </div>
-                    <h3 className="text-lg font-bold mb-2">No calls yet</h3>
-                    <p className="text-sm">Link with a peer to start encrypted voice calls.</p>
+                    <h3 className="text-sm font-bold text-gray-400">No recent calls</h3>
+                    <p className="text-[10px] uppercase tracking-wider text-gray-600 mt-1">Encrypted signals will appear here</p>
                   </div>
                 ) : (
-                  <div className="space-y-1">
+                  <div className="space-y-2">
                     {callHistory.map(call => (
                       <div 
                         key={call.id} 
-                        className="flex items-center gap-3 p-4 hover:bg-app-sec cursor-pointer transition-colors border-b border-white/5 rounded-xl mx-2"
+                        className="flex items-center gap-3 p-4 bg-app-sec/20 border border-white/5 hover:bg-app-sec/40 cursor-pointer transition-all rounded-2xl mx-2 group"
                         onClick={() => {
                           setRemoteId(call.peerId);
                           setRemoteName(call.peerName);
                           setStep('chat');
                         }}
                       >
-                        <div className="w-12 h-12 rounded-full bg-brand-blue/20 flex items-center justify-center text-lg font-bold text-brand-blue">
+                        <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-lg font-bold text-brand-blue/60">
                           {call.peerName.substring(0, 1).toUpperCase()}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-gray-200 truncate">{call.peerName}</h3>
-                          <div className="flex items-center gap-1.5 text-xs text-gray-500">
-                            {call.type === 'incoming' && <PhoneIncoming size={12} className="text-brand-blue" />}
-                            {call.type === 'outgoing' && <PhoneOutgoing size={12} className="text-brand-blue" />}
-                            {call.type === 'missed' && <PhoneMissed size={12} className="text-red-500" />}
-                            <span>{new Date(call.timestamp).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
-                            {call.duration && <span>• {formatDuration(call.duration)}</span>}
+                          <div className="flex items-center justify-between mb-0.5">
+                            <h3 className="font-bold text-gray-200 truncate">{call.peerName}</h3>
+                            <span className="text-[10px] text-gray-600 font-mono">
+                              {new Date(call.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-gray-500 font-bold uppercase tracking-tighter">
+                            {call.type === 'incoming' && <PhoneIncoming size={10} className="text-brand-blue" />}
+                            {call.type === 'outgoing' && <PhoneOutgoing size={10} className="text-brand-blue" />}
+                            {call.type === 'missed' && <PhoneMissed size={10} className="text-red-500" />}
+                            <span className={call.type === 'missed' ? 'text-red-500/80' : ''}>
+                              {call.type === 'missed' ? 'Missed Call' : (call.type === 'incoming' ? 'Incoming' : 'Outgoing')}
+                            </span>
+                            {call.duration && (
+                              <span className="text-gray-600 ml-1 flex items-center gap-1">
+                                <Clock size={10} /> {formatDuration(call.duration)}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <button 
@@ -1098,7 +1597,7 @@ export default function App() {
                             setRemoteName(call.peerName);
                             startCall(); 
                           }} 
-                          className="p-3 text-brand-blue hover:bg-brand-blue/10 rounded-full transition-colors"
+                          className="p-3 text-brand-blue hover:bg-brand-blue/10 rounded-xl transition-all opacity-0 group-hover:opacity-100"
                         >
                           <Phone size={20} />
                         </button>
@@ -1185,17 +1684,40 @@ export default function App() {
                    <textarea
                      placeholder="Type a message"
                      rows={1}
+                     value={messageText}
+                     onChange={(e) => {
+                       setMessageText(e.target.value);
+                       handleTyping(e.target.value.length > 0);
+                       
+                       // Clear timeout if exists
+                       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                       
+                       // Set timeout to stop typing
+                       typingTimeoutRef.current = setTimeout(() => {
+                         handleTyping(false);
+                       }, 2000);
+                     }}
                      className="w-full bg-transparent border-none outline-none resize-none text-sm py-1.5 text-gray-100"
                      onKeyDown={(e) => {
                        if (e.key === 'Enter' && !e.shiftKey) {
                          e.preventDefault();
-                         sendMessage((e.target as HTMLTextAreaElement).value);
-                         (e.target as HTMLTextAreaElement).value = '';
+                         if (messageText.trim()) {
+                           sendMessage(messageText.trim());
+                           setMessageText('');
+                         }
                        }
                      }}
                    />
                 </div>
-                <button onClick={() => sendMessage((document.querySelector('textarea') as HTMLTextAreaElement).value)} className="bg-brand-blue text-white p-3 rounded-full shadow-lg">
+                <button 
+                  onClick={() => {
+                    if (messageText.trim()) {
+                      sendMessage(messageText.trim());
+                      setMessageText('');
+                    }
+                  }} 
+                  className={`p-3 rounded-full shadow-lg transition-all ${messageText.trim() ? 'bg-brand-blue text-white scale-110' : 'bg-gray-800 text-gray-600'}`}
+                >
                   <Send size={20} />
                 </button>
               </div>
@@ -1203,210 +1725,253 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* Modal for Save Contact Prompt */}
-        <AnimatePresence>
-          {showSavePrompt && potentialContact && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-6"
-            >
-              <motion.div 
-                initial={{ scale: 0.9, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                className="bg-app-sec w-full max-w-sm rounded-[32px] p-8 shadow-2xl border border-white/10 text-center"
+          {/* Modal for Save Contact Prompt */}
+          <AnimatePresence>
+            {showSavePrompt && potentialContact && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[70] flex items-center justify-center p-6"
               >
-                <div className="w-20 h-20 bg-brand-blue/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <UserPlus size={40} className="text-brand-blue" />
-                </div>
-                <h3 className="text-2xl font-bold text-white mb-2">Save New Contact?</h3>
-                <p className="text-gray-400 text-sm mb-8">
-                  Would you like to save <span className="text-brand-blue font-bold">{potentialContact.name}</span> to your contacts?
-                </p>
-                
-                <div className="bg-black/40 rounded-2xl p-4 mb-8 text-left border border-white/5">
-                  <div className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-1">Peer ID</div>
-                  <div className="text-xs font-mono text-gray-300 break-all">{potentialContact.id}</div>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  <button 
-                    onClick={confirmSaveContact}
-                    className="w-full bg-brand-blue text-white font-bold py-4 rounded-2xl shadow-xl shadow-brand-blue/10 active:scale-[0.98] transition-all"
-                  >
-                    Save Contact
-                  </button>
-                  <button 
-                    onClick={() => {
-                      setShowSavePrompt(false);
-                      setPotentialContact(null);
-                    }}
-                    className="w-full py-3 text-gray-500 font-bold hover:text-white transition-colors"
-                  >
-                    Not Now
-                  </button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Modal for Add Contact */}
-        <AnimatePresence>
-          {showAddContact && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-6"
-            >
-              <motion.div 
-                initial={{ scale: 0.9, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                className="bg-app-sec w-full max-w-sm rounded-3xl p-8 shadow-2xl border border-white/10"
-              >
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-bold text-white">Add New Contact</h3>
-                  <button onClick={() => setShowAddContact(false)} className="text-gray-500 hover:text-white">
-                    <ChevronLeft size={24} className="rotate-180" />
-                  </button>
-                </div>
-                
-                <form onSubmit={handleAddContact} className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-brand-blue uppercase tracking-widest block ml-1">Contact Name</label>
-                    <input 
-                      type="text" 
-                      placeholder="e.g. Alice Smith"
-                      value={newContactName}
-                      onChange={(e) => setNewContactName(e.target.value)}
-                      className="w-full bg-black/40 border border-white/5 rounded-2xl py-3.5 px-4 text-white focus:outline-none focus:border-brand-blue/50 transition-colors"
-                      autoFocus
-                    />
+                <motion.div 
+                  initial={{ scale: 0.9, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  className="bg-app-sec w-full max-w-sm rounded-[32px] p-8 shadow-2xl border border-white/10 text-center"
+                >
+                  <div className="w-20 h-20 bg-brand-blue/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <UserPlus size={40} className="text-brand-blue" />
                   </div>
+                  <h3 className="text-2xl font-bold text-white mb-2">Save New Contact?</h3>
+                  <p className="text-gray-400 text-sm mb-8">
+                    Would you like to save <span className="text-brand-blue font-bold">{potentialContact.name}</span> to your contacts?
+                  </p>
                   
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-bold text-brand-blue uppercase tracking-widest block ml-1">Peer ID / Signature</label>
-                    <input 
-                      type="text" 
-                      placeholder="Paste ID here..."
-                      value={newContactId}
-                      onChange={(e) => setNewContactId(e.target.value)}
-                      className="w-full bg-black/40 border border-white/5 rounded-2xl py-3.5 px-4 text-white font-mono text-sm focus:outline-none focus:border-brand-blue/50 transition-colors"
-                    />
+                  <div className="bg-black/40 rounded-2xl p-4 mb-8 text-left border border-white/5">
+                    <div className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-1">Peer ID</div>
+                    <div className="text-xs font-mono text-gray-300 break-all">{potentialContact.id}</div>
                   </div>
 
-                  <div className="pt-2">
+                  <div className="flex flex-col gap-3">
                     <button 
-                      type="submit"
-                      disabled={!newContactId.trim() || !newContactName.trim()}
-                      className="w-full bg-brand-blue text-white font-bold py-4 rounded-2xl shadow-xl shadow-brand-blue/10 active:scale-[0.98] transition-all disabled:opacity-50"
+                      onClick={confirmSaveContact}
+                      className="w-full bg-brand-blue text-white font-bold py-4 rounded-2xl shadow-xl shadow-brand-blue/10 active:scale-[0.98] transition-all"
                     >
                       Save Contact
                     </button>
-                  </div>
-                </form>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Modal Overlay for QR Code */}
-        <AnimatePresence>
-          {showId && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 bg-black/90 backdrop-blur-md z-50 p-8 flex flex-col items-center justify-center text-center"
-            >
-              <div className="bg-white p-6 rounded-3xl shadow-2xl mb-8">
-                <QRCodeSVG value={peerId} size={220} />
-              </div>
-              <h3 className="text-2xl font-bold mb-4 text-white">Your Peer ID</h3>
-              <p className="text-gray-400 mb-8 text-sm max-w-xs mx-auto">Share this code with others to establish a direct P2P connection.</p>
-              <div className="flex flex-col gap-3 w-full max-w-xs">
-                <button onClick={copyToClipboard} className="flex items-center justify-center gap-2 w-full py-3.5 bg-app-sec border border-white/10 rounded-2xl font-semibold text-gray-200">
-                  {copySuccess ? <Check size={18} className="text-brand-blue" /> : <Copy size={18} className="text-brand-blue" />}
-                  {copySuccess ? 'Copied!' : 'Copy ID String'}
-                </button>
-                <button onClick={() => setShowId(false)} className="w-full py-4 text-brand-blue font-bold uppercase tracking-widest text-sm">Close</button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Call UI Overlay */}
-        <AnimatePresence>
-          {callStatus !== 'idle' && (
-            <motion.div
-              initial={{ opacity: 0, y: 100 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 100 }}
-              className="absolute inset-0 bg-app-bg z-40 flex flex-col items-center justify-between py-20"
-            >
-              <div className="text-center space-y-4">
-                <div className="w-24 h-24 rounded-full bg-black/10 flex items-center justify-center mx-auto border-4 border-white/20">
-                    <User size={64} className="text-white/50" />
-                </div>
-                <h2 className="text-3xl font-bold text-white">{remoteName || 'Peer'}</h2>
-                <div className="flex items-center justify-center gap-2 text-white/70 font-medium">
-                   {callStatus === 'ringing' ? (isIncomingCall ? 'Connection Incoming' : 'Ringing...') : formatDuration(callDuration)}
-                </div>
-                {callStatus === 'active' && (
-                  <div className="flex justify-center mt-2">
-                    <motion.div 
-                      layout
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${isMuted ? 'bg-red-500/30 text-red-200 border border-red-500/50' : 'bg-white/10 text-brand-blue border border-white/10'}`}
+                    <button 
+                      onClick={() => {
+                        setShowSavePrompt(false);
+                        setPotentialContact(null);
+                      }}
+                      className="w-full py-3 text-gray-500 font-bold hover:text-white transition-colors"
                     >
-                      <div className={`w-1.5 h-1.5 rounded-full ${isMuted ? 'bg-red-500' : 'bg-brand-blue animate-pulse'}`} />
-                      {isMuted ? 'Microphone Muted' : 'Microphone Active'}
-                    </motion.div>
+                      Not Now
+                    </button>
                   </div>
-                )}
-              </div>
-              <div className="flex items-center justify-center gap-8 w-full px-10">
-                {localStream && (
-                  <button onClick={toggleMute} className={`p-5 rounded-full ${isMuted ? 'bg-red-500 text-white' : 'bg-white/20 text-white'} transition-all active:scale-95 shadow-lg`}>
-                    {isMuted ? <MicOff size={28} /> : <Mic size={28} />}
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Modal for Add Contact */}
+          <AnimatePresence>
+            {showAddContact && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-6"
+              >
+                <motion.div 
+                  initial={{ scale: 0.9, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+                  className="bg-app-sec w-full max-w-sm rounded-3xl p-8 shadow-2xl border border-white/10"
+                >
+                  <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-xl font-bold text-white">Add New Contact</h3>
+                    <button onClick={() => setShowAddContact(false)} className="text-gray-500 hover:text-white">
+                      <ChevronLeft size={24} className="rotate-180" />
+                    </button>
+                  </div>
+                  
+                  <form onSubmit={handleAddContact} className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-brand-blue uppercase tracking-widest block ml-1">Contact Name</label>
+                      <input 
+                        type="text" 
+                        placeholder="e.g. Alice Smith"
+                        value={newContactName}
+                        onChange={(e) => setNewContactName(e.target.value)}
+                        className="w-full bg-black/40 border border-white/5 rounded-2xl py-3.5 px-4 text-white focus:outline-none focus:border-brand-blue/50 transition-colors"
+                        autoFocus
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-bold text-brand-blue uppercase tracking-widest block ml-1">Peer ID / Signature</label>
+                      <input 
+                        type="text" 
+                        placeholder="Paste ID here..."
+                        value={newContactId}
+                        onChange={(e) => setNewContactId(e.target.value)}
+                        className="w-full bg-black/40 border border-white/5 rounded-2xl py-3.5 px-4 text-white font-mono text-sm focus:outline-none focus:border-brand-blue/50 transition-colors"
+                      />
+                    </div>
+
+                    <div className="pt-2">
+                      <button 
+                        type="submit"
+                        disabled={!newContactId.trim() || !newContactName.trim()}
+                        className="w-full bg-brand-blue text-white font-bold py-4 rounded-2xl shadow-xl shadow-brand-blue/10 active:scale-[0.98] transition-all disabled:opacity-50"
+                      >
+                        Save Contact
+                      </button>
+                    </div>
+                  </form>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Modal Overlay for QR Code */}
+          <AnimatePresence>
+            {showId && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-black/90 backdrop-blur-md z-50 p-8 flex flex-col items-center justify-center text-center"
+              >
+                <div className="bg-white p-6 rounded-3xl shadow-2xl mb-8">
+                  <QRCodeSVG value={peerId} size={220} />
+                </div>
+                <h3 className="text-2xl font-bold mb-4 text-white">Your Peer ID</h3>
+                <p className="text-gray-400 mb-8 text-sm max-w-xs mx-auto">Share this code with others to establish a direct P2P connection.</p>
+                <div className="flex flex-col gap-3 w-full max-w-xs">
+                  <button onClick={copyToClipboard} className="flex items-center justify-center gap-2 w-full py-3.5 bg-app-sec border border-white/10 rounded-2xl font-semibold text-gray-200">
+                    {copySuccess ? <Check size={18} className="text-brand-blue" /> : <Copy size={18} className="text-brand-blue" />}
+                    {copySuccess ? 'Copied!' : 'Copy ID String'}
                   </button>
-                )}
-                {isIncomingCall && callStatus === 'ringing' ? (
-                  <button onClick={answerCall} className="p-6 bg-brand-blue text-white rounded-full"><Phone size={32} /></button>
-                ) : null}
-                <button onClick={handleCallEnd} className="p-6 bg-red-500 text-white rounded-full"><PhoneOff size={32} /></button>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+                  <button onClick={() => setShowId(false)} className="w-full py-4 text-brand-blue font-bold uppercase tracking-widest text-sm">Close</button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-        <audio ref={remoteAudioRef} autoPlay style={{ display: 'none' }} />
-      </main>
+          {/* Call UI Overlay */}
+          <AnimatePresence>
+            {callStatus !== 'idle' && (
+              <motion.div
+                initial={{ opacity: 0, y: 100 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 100 }}
+                className="absolute inset-0 bg-app-bg z-40 flex flex-col items-center justify-between py-20"
+              >
+                <div className="text-center space-y-4">
+                  <div className="w-24 h-24 rounded-full bg-black/10 flex items-center justify-center mx-auto border-4 border-white/20">
+                      <User size={64} className="text-white/50" />
+                  </div>
+                  <h2 className="text-3xl font-bold text-white">{remoteName || 'Peer'}</h2>
+                  <div className="flex items-center justify-center gap-2 text-white/70 font-medium">
+                     {callStatus === 'ringing' ? (isIncomingCall ? 'Connection Incoming' : 'Ringing...') : formatDuration(callDuration)}
+                  </div>
+                  {callStatus === 'active' && (
+                    <div className="flex justify-center mt-2">
+                      <motion.div 
+                        layout
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className={`flex items-center gap-2 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${isMuted ? 'bg-red-500/30 text-red-200 border border-red-500/50' : 'bg-white/10 text-brand-blue border border-white/10'}`}
+                      >
+                        <div className={`w-1.5 h-1.5 rounded-full ${isMuted ? 'bg-red-500' : 'bg-brand-blue animate-pulse'}`} />
+                        {isMuted ? 'Microphone Muted' : 'Microphone Active'}
+                      </motion.div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center justify-center gap-8 w-full px-10">
+                  {localStream && (
+                    <button onClick={toggleMute} className={`p-5 rounded-full ${isMuted ? 'bg-red-500 text-white' : 'bg-white/20 text-white'} transition-all active:scale-95 shadow-lg`}>
+                      {isMuted ? <MicOff size={28} /> : <Mic size={28} />}
+                    </button>
+                  )}
+                  {isIncomingCall && callStatus === 'ringing' ? (
+                    <button onClick={answerCall} className="p-6 bg-brand-blue text-white rounded-full"><Phone size={32} /></button>
+                  ) : null}
+                  <button onClick={handleCallEnd} className="p-6 bg-red-500 text-white rounded-full"><PhoneOff size={32} /></button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-      <footer className="md:hidden flex items-center justify-around h-16 bg-app-sec border-t border-white/5">
-        <button onClick={() => setStep('discovery')} className={`flex flex-col items-center gap-1 ${step === 'discovery' ? 'text-brand-blue' : 'text-gray-500'}`}>
-          <MessageSquare size={20} /><span className="text-[10px] font-medium">Chats</span>
-        </button>
-        <button onClick={() => setStep('contacts')} className={`flex flex-col items-center gap-1 ${step === 'contacts' ? 'text-brand-blue' : 'text-gray-500'}`}>
-          <Users size={20} /><span className="text-[10px] font-medium">Contacts</span>
-        </button>
-        <button onClick={() => setStep('calls')} className={`flex flex-col items-center gap-1 ${step === 'calls' ? 'text-brand-blue' : 'text-gray-500'}`}>
-          <Phone size={20} /><span className="text-[10px] font-medium">Calls</span>
-        </button>
-        <button onClick={() => setStep('account')} className={`flex flex-col items-center gap-1 ${step === 'account' ? 'text-brand-blue' : 'text-gray-500'}`}>
-          <User size={20} /><span className="text-[10px] font-medium">Profile</span>
-        </button>
-      </footer>
+          <audio ref={remoteAudioRef} autoPlay style={{ display: 'none' }} />
 
-      <footer className="hidden md:flex h-8 bg-app-sec border-t border-white/5 px-6 items-center justify-between text-[11px] text-gray-500">
+          {/* QR Scanner Overlay */}
+          <AnimatePresence>
+            {isScanning && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[100] bg-black flex flex-col"
+              >
+                <div className="p-4 flex items-center justify-between">
+                  <button 
+                    onClick={() => setIsScanning(false)}
+                    className="p-2 text-white hover:bg-white/10 rounded-full transition-colors"
+                  >
+                    <X size={24} />
+                  </button>
+                  <h2 className="text-white font-bold">Scan Peer ID</h2>
+                  <div className="w-10"></div>
+                </div>
+                
+                <div className="flex-1 flex items-center justify-center p-6">
+                  <div className="w-full max-w-sm aspect-square relative bg-gray-900 rounded-3xl overflow-hidden border-2 border-brand-blue/50 shadow-2xl shadow-brand-blue/20">
+                     <div id="qr-reader" className="w-full h-full"></div>
+                     
+                     {/* Decorative corners */}
+                     <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-brand-blue rounded-tl-xl m-4 z-10 pointer-events-none"></div>
+                     <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-brand-blue rounded-tr-xl m-4 z-10 pointer-events-none"></div>
+                     <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-brand-blue rounded-bl-xl m-4 z-10 pointer-events-none"></div>
+                     <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-brand-blue rounded-br-xl m-4 z-10 pointer-events-none"></div>
+                     
+                     <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-20 z-10">
+                        <div className="w-1/2 h-0.5 bg-brand-blue animate-[ping_2s_infinite]"></div>
+                     </div>
+                  </div>
+                </div>
+                
+                <div className="p-12 text-center">
+                  <p className="text-gray-400 text-sm font-medium uppercase tracking-[0.2em]">Align QR Code within the frame</p>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </main>
+
+        <footer className="flex items-center justify-around h-16 bg-app-sec border-t border-white/5 z-30 shrink-0">
+          <button onClick={() => setStep('nearby')} className={`flex flex-col items-center gap-1 transition-all ${step === 'nearby' ? 'text-brand-blue scale-110' : 'text-gray-500 hover:text-gray-300'}`}>
+            <Radio size={20} /><span className="text-[10px] font-medium">Nearby</span>
+          </button>
+          <button onClick={() => setStep('discovery')} className={`flex flex-col items-center gap-1 transition-all ${step === 'discovery' ? 'text-brand-blue scale-110' : 'text-gray-500 hover:text-gray-300'}`}>
+            <MessageSquare size={20} /><span className="text-[10px] font-medium">Chats</span>
+          </button>
+          <button onClick={() => setStep('contacts')} className={`flex flex-col items-center gap-1 transition-all ${step === 'contacts' ? 'text-brand-blue scale-110' : 'text-gray-500 hover:text-gray-300'}`}>
+            <Users size={20} /><span className="text-[10px] font-medium">Contacts</span>
+          </button>
+          <button onClick={() => setStep('calls')} className={`flex flex-col items-center gap-1 transition-all ${step === 'calls' ? 'text-brand-blue scale-110' : 'text-gray-500 hover:text-gray-300'}`}>
+            <Phone size={20} /><span className="text-[10px] font-medium">Calls</span>
+          </button>
+        </footer>
+      </div>
+
+      <footer className="hidden md:flex h-8 w-full bg-black/40 px-6 items-center justify-between text-[10px] text-gray-600 fixed bottom-0 left-0 right-0 pointer-events-none">
         <div className="flex items-center gap-4">
-          <span className="flex items-center gap-1.5"><div className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-brand-blue' : 'bg-yellow-500 animate-pulse'}`} />{connectionStatus === 'connected' ? 'Secure P2P Channel Active' : 'Searching for Peers...'}</span>
-          <span className="opacity-50">Local ID: {peerId}</span>
+          <span className="flex items-center gap-1.5"><div className={`w-1.5 h-1.5 rounded-full ${connectionStatus === 'connected' ? 'bg-brand-blue' : 'bg-yellow-500 animate-pulse'}`} />{connectionStatus === 'connected' ? 'Secure P2P Channel Active' : 'Searching for Peers...'}</span>
         </div>
-        <div className="font-mono opacity-50 uppercase tracking-tighter">BlueLink v2.0 • Encryption: AES-GCM</div>
+        <div className="font-mono uppercase tracking-tighter">BlueLink v2.0 • Encryption: AES-GCM</div>
       </footer>
     </div>
   );
