@@ -6,10 +6,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Device } from '@capacitor/device';
 import { Network } from '@capacitor/network';
+import { Capacitor } from '@capacitor/core';
 import { BleClient } from '@capacitor-community/bluetooth-le';
 import { Peer, DataConnection } from 'peerjs';
 import { motion, AnimatePresence } from 'motion/react';
-import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X } from 'lucide-react';
+import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, CheckCheck, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X, Play, Pause } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { Message, PeerData, Contact, CallRecord, ContactRequest } from './types';
@@ -23,6 +24,80 @@ import {
   arrayBufferToBase64,
   base64ToArrayBuffer
 } from './lib/crypto';
+
+// Voice Message Component
+function VoiceMessage({ bubble }: { bubble: Message }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+
+    const updateProgress = () => {
+      setProgress((audio.currentTime / audio.duration) * 100 || 0);
+    };
+
+    const handleEnded = () => {
+      setIsPlaying(false);
+      setProgress(0);
+    };
+
+    audio.addEventListener('timeupdate', updateProgress);
+    audio.addEventListener('ended', handleEnded);
+    
+    return () => {
+      audio.removeEventListener('timeupdate', updateProgress);
+      audio.removeEventListener('ended', handleEnded);
+    };
+  }, []);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    
+    if (isPlaying) {
+      audioRef.current.pause();
+    } else {
+      audioRef.current.play();
+    }
+    setIsPlaying(!isPlaying);
+  };
+
+  if (!bubble.file || !bubble.file.url) return null;
+
+  return (
+    <div className="flex items-center gap-3 py-1 pr-2 w-full min-w-[180px]">
+      <button 
+        onClick={togglePlay}
+        className="w-10 h-10 rounded-full bg-brand-blue flex items-center justify-center text-white shadow-lg hover:scale-110 transition-transform active:scale-95"
+      >
+        {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-0.5" />}
+      </button>
+      
+      <div className="flex-1 flex flex-col gap-1.5">
+        <div className="flex items-center justify-between">
+           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">Voice Message</span>
+           <span className="text-[10px] font-mono text-gray-500">
+             {bubble.file.size ? (bubble.file.size / 1024).toFixed(1) + ' KB' : ''}
+           </span>
+        </div>
+        <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden relative">
+           <div 
+             className="absolute inset-0 bg-brand-blue/30 scale-x-[1.2] origin-left blur-sm" 
+             style={{ width: `${progress}%` }} 
+           />
+           <div 
+             className="h-full bg-brand-blue rounded-full relative z-10" 
+             style={{ width: `${progress}%` }} 
+           />
+        </div>
+      </div>
+      
+      <audio ref={audioRef} src={bubble.file.url} className="hidden" />
+    </div>
+  );
+}
 
 export default function App() {
   const [userName, setUserName] = useState<string>(() => {
@@ -101,8 +176,9 @@ export default function App() {
   const callTimerRef = useRef<NodeJS.Timeout | null>(null);
   
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
-  const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
+  const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const [unreadCount, setUnreadCount] = useState(0);
   const [isTabActive, setIsTabActive] = useState(true);
@@ -110,6 +186,7 @@ export default function App() {
   
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeMobileTab, setActiveMobileTab] = useState<'mesh' | 'id'>('mesh');
+  const [syncingPeerId, setSyncingPeerId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -124,6 +201,23 @@ export default function App() {
       if (active) {
         setUnreadCount(0);
         document.title = 'BlueLink P2P | Secure Local Chat';
+        
+        // Mark as read if in chat
+        if (step === 'chat' && connection && connectionStatus === 'connected') {
+           const peerId = connection.peer;
+           setMessages(prev => prev.map(m => 
+             (m.senderId === peerId && m.isMe === false) ? { ...m, status: 'read' } : m
+           ));
+           
+           // Find unread from this peer
+           const unreadFromPeer = messages.filter(m => m.senderId === peerId && m.status !== 'read');
+           unreadFromPeer.forEach(msg => {
+             connection.send({ 
+               type: 'receipt', 
+               payload: { messageId: msg.id, status: 'read' } 
+             });
+           });
+        }
       }
     };
 
@@ -183,60 +277,94 @@ export default function App() {
     initCapacitor();
   }, []);
 
-  const startBluetoothDiscovery = async () => {
-    try {
-      // Initialize BLE Client
-      try {
-        await BleClient.initialize();
-      } catch (e) {
-        console.warn('BLE Client initialization skipped or failed');
-      }
-
-      const isBleSupported = await BleClient.isEnabled().catch(() => false);
-
-      if (!isBleSupported) {
-        // Fallback to Simulation for the browser environment
-        setLastError('Switching to Virtual Mesh (Native Hardware Unavailable in Browser)');
-        setTimeout(() => setLastError(null), 3000);
-        
-        // Trigger simulated discovery if not already happening
-        if (step !== 'nearby') {
-           setStep('nearby');
-        }
-        return;
-      }
+  // Background Mesh Discovery Effect
+  useEffect(() => {
+    let scanInterval: NodeJS.Timeout;
+    
+    const runDiscovery = async () => {
+      // Don't run discovery during onboarding if that was a state (though current state suggest it starts in discovery)
+      if (step === 'onboarding' as any) return;
       
-      // Real BLE Scanning (Only works in Capacitor native app)
-      await BleClient.requestLEScan(
-        {
-          services: [], // Optionally filter for specific BlueLink mesh service UUID if we had one
-        },
-        (result) => {
-          if (result.device.name?.includes('BlueLink') || result.device.name?.includes('Mesh')) {
-            const newNode = {
-              id: `bluelink-${result.device.deviceId}`,
-              name: result.device.name || 'BT Mesh Node',
-              signal: result.rssi || -70,
-              dist: result.rssi ? Math.abs(result.rssi) / 10 : 5,
-              type: 'unknown' as const
-            };
-            
-            setDiscoveredNodes(prev => {
-               if (prev.find(n => n.id === newNode.id)) return prev;
-               return [newNode, ...prev].sort((a, b) => b.signal - a.signal);
-            });
+      const isNative = Capacitor.isNativePlatform();
+      
+      if (isNative) {
+        // Native BLE Persistent Scan
+        try {
+          await BleClient.initialize();
+          const isBleEnabled = await BleClient.isEnabled();
+          
+          if (isBleEnabled && !isScanningActive) {
+            setIsScanningActive(true);
+            await BleClient.requestLEScan(
+              { services: [] },
+              (result) => {
+                if (result.device.name?.includes('BlueLink') || result.device.name?.includes('Mesh')) {
+                  const newNode = {
+                    id: `bluelink-${result.device.deviceId}`,
+                    name: result.device.name || 'BT Mesh Node',
+                    signal: result.rssi || -70,
+                    dist: result.rssi ? Math.abs(result.rssi) / 10 : 5,
+                    type: 'unknown' as const
+                  };
+                  
+                  setDiscoveredNodes(prev => {
+                    if (prev.find(n => n.id === newNode.id)) return prev;
+                    return [newNode, ...prev].sort((a, b) => b.signal - a.signal);
+                  });
+                }
+              }
+            );
           }
+        } catch (e) {
+          console.error('Persistent BT Scan Error:', e);
         }
-      );
-      
-      // Stop scanning after 30 seconds
-      setTimeout(async () => {
-        await BleClient.stopLEScan();
-      }, 30000);
+      } else {
+        // Browser/Simulation Persistent Discovery
+        if (!isScanningActive) {
+          setIsScanningActive(true);
+          const potentialNodes = [
+            ...contacts.map(c => ({ id: c.id, name: c.name, signal: -45, dist: 1.2, type: 'known' as const })),
+            { id: 'bluelink-nd-55', name: 'Mesh Relay Delta', signal: -82, dist: 15.4, type: 'unknown' as const },
+            { id: 'bluelink-nd-67', name: 'Remote Terminal', signal: -67, dist: 8.9, type: 'unknown' as const },
+            { id: 'bluelink-nd-94', name: 'Hidden Segment', signal: -94, dist: 24.1, type: 'unknown' as const },
+            { id: 'bluelink-nd-12', name: 'Node-Prime', signal: -52, dist: 3.4, type: 'unknown' as const },
+            { id: 'bluelink-nd-88', name: 'Relay-Alpha', signal: -78, dist: 12.1, type: 'unknown' as const },
+            { id: 'bluelink-nd-03', name: 'Ghost_Net', signal: -89, dist: 19.8, type: 'unknown' as const }
+          ];
 
-    } catch (e) {
-      console.error('BT Discovery Error:', e);
-      setLastError('Hardware Node Discovery Failed. Try QR Link.');
+          potentialNodes.forEach((node, i) => {
+            setTimeout(() => {
+              setDiscoveredNodes(prev => {
+                if (prev.find(n => n.id === node.id)) return prev;
+                return [...prev, node].sort((a, b) => b.signal - a.signal);
+              });
+            }, i * 1000);
+          });
+        }
+      }
+    };
+
+    runDiscovery();
+    
+    // Auto-refresh simulation data or ensure BLE is still active every 60s
+    scanInterval = setInterval(runDiscovery, 60000);
+
+    return () => {
+      clearInterval(scanInterval);
+      if (Capacitor.isNativePlatform()) {
+        BleClient.stopLEScan().catch(() => {});
+      }
+    };
+  }, [contacts]); // Removed step from dependency to keep it running in background
+
+  const startBluetoothDiscovery = async () => {
+    // This is now handled by the persistent effect, 
+    // but we can trigger an immediate refresh or show status
+    setLastError('Background Mesh Scan is Active');
+    setTimeout(() => setLastError(null), 2000);
+    
+    if (step !== 'nearby') {
+      setStep('nearby');
     }
   };
 
@@ -267,40 +395,7 @@ export default function App() {
     }
   }, [isScanning, handleScanSuccess]);
 
-  // Simulated Discovery Scan
-  useEffect(() => {
-    if (step === 'nearby') {
-      setIsScanningActive(true);
-      const timer = setTimeout(() => {
-        const potentialNodes = [
-          ...contacts.map(c => ({ id: c.id, name: c.name, signal: -45, dist: 1.2, type: 'known' as const })),
-          { id: 'bluelink-nd-55', name: 'Mesh Relay Delta', signal: -82, dist: 15.4, type: 'unknown' as const },
-          { id: 'bluelink-nd-67', name: 'Remote Terminal', signal: -67, dist: 8.9, type: 'unknown' as const },
-          { id: 'bluelink-nd-94', name: 'Hidden Segment', signal: -94, dist: 24.1, type: 'unknown' as const },
-          { id: 'bluelink-nd-12', name: 'Node-Prime', signal: -52, dist: 3.4, type: 'unknown' as const },
-          { id: 'bluelink-nd-88', name: 'Relay-Alpha', signal: -78, dist: 12.1, type: 'unknown' as const },
-          { id: 'bluelink-nd-03', name: 'Ghost_Net', signal: -89, dist: 19.8, type: 'unknown' as const }
-        ];
-        
-        // Stagger discovery
-        potentialNodes.forEach((node, i) => {
-          setTimeout(() => {
-            setDiscoveredNodes(prev => {
-              if (prev.find(n => n.id === node.id)) return prev;
-              const updated = [...prev, node].sort((a, b) => b.signal - a.signal);
-              return updated;
-            });
-          }, i * 600);
-        });
-      }, 800);
-
-      return () => {
-        clearTimeout(timer);
-        setIsScanningActive(false);
-        setDiscoveredNodes([]);
-      };
-    }
-  }, [step, contacts]);
+  // Real scan logic is now handled by the Background Mesh Discovery Effect
 
   // Initialize PeerJS
   useEffect(() => {
@@ -408,8 +503,105 @@ export default function App() {
     }
   }, [userName, step === 'onboarding']);
 
+  // Auto-sync Effect for Queued Messages
+  useEffect(() => {
+    // Only attempt auto-connect if we have a peer object and aren't already busy
+    if (!peer || connection || connectionStatus === 'connecting' || syncingPeerId) return;
+
+    const peersWithQueue = Object.keys(queuedMessages).filter(id => (queuedMessages[id] || []).length > 0);
+    if (peersWithQueue.length === 0) return;
+
+    // Check if any peer with queue is currently discovered
+    const targetPeerId = peersWithQueue.find(pid => 
+      discoveredNodes.some(node => node.id === pid)
+    );
+
+    if (targetPeerId) {
+      setSyncingPeerId(targetPeerId);
+      console.log(`[Mesh Sync] Auto-connecting to node ${targetPeerId} to deliver queued packets...`);
+      
+      const conn = peer.connect(targetPeerId, {
+        reliable: true,
+        connectionPriority: 1
+      });
+      
+      setupConnection(conn, true); // true for background/sync mode
+    }
+  }, [discoveredNodes, queuedMessages, peer, connectionStatus, !!connection, syncingPeerId]);
+
+  // Sync queued messages once encrypted
+  useEffect(() => {
+    if (connection && isEncrypted && sharedSecret && connectionStatus === 'connected') {
+      const peerId = connection.peer;
+      const queue = queuedMessages[peerId] || [];
+      
+      if (queue.length > 0) {
+        console.log(`[Mesh Sync] Delivering ${queue.length} encrypted packets to ${peerId}...`);
+        
+        const processQueue = async () => {
+          for (const msg of queue) {
+            try {
+              if (sharedSecret) {
+                const { iv, encryptedData } = await encryptData(msg.text, sharedSecret);
+                const encryptedPayload = {
+                  ...msg,
+                  text: undefined,
+                  encrypted: true,
+                  encryptedText: arrayBufferToBase64(encryptedData),
+                  textIv: arrayBufferToBase64(iv.buffer as ArrayBuffer),
+                  status: 'sent'
+                };
+                connection.send({ type: 'chat', payload: encryptedPayload });
+              } else {
+                connection.send({ type: 'chat', payload: { ...msg, status: 'sent' } });
+              }
+            } catch (e) {
+              console.error('Queue encryption failed', e);
+              connection.send({ type: 'chat', payload: { ...msg, status: 'sent' } });
+            }
+          }
+          
+          setMessages(prev => prev.map(m => {
+            const queued = queue.find(q => q.id === m.id);
+            return queued ? { ...m, status: 'sent' } : m;
+          }));
+          
+          setQueuedMessages(prev => {
+            const next = { ...prev };
+            delete next[peerId];
+            return next;
+          });
+        };
+        
+        processQueue();
+      }
+    }
+  }, [isEncrypted, connectionStatus, !!connection, !!sharedSecret]);
+
+  // Mark messages as read when entering chat
+  useEffect(() => {
+    if (step === 'chat' && connection && connectionStatus === 'connected') {
+      const peerId = connection.peer;
+      const unreadFromPeer = messages.filter(m => m.senderId === peerId && m.status !== 'read');
+      
+      if (unreadFromPeer.length > 0) {
+        setMessages(prev => prev.map(m => 
+          (m.senderId === peerId && m.isMe === false) ? { ...m, status: 'read' } : m
+        ));
+        
+        // Send receipts for all unread
+        unreadFromPeer.forEach(msg => {
+          connection.send({ 
+            type: 'receipt', 
+            payload: { messageId: msg.id, status: 'read' } 
+          });
+        });
+      }
+    }
+  }, [step, connectionStatus, !!connection]);
+
   // Handle incoming data
-  const setupConnection = useCallback((conn: DataConnection) => {
+  const setupConnection = useCallback((conn: DataConnection, isBackground: boolean = false) => {
     const sendKeyExchange = async () => {
       if (localKeyPair) {
         const exportedPubKey = await exportPublicKey(localKeyPair.publicKey);
@@ -418,32 +610,41 @@ export default function App() {
     };
 
     conn.on('open', () => {
+      setSyncingPeerId(null);
       setConnection(conn);
       setConnectionStatus('connected');
       setRemoteId(conn.peer);
       // Wait for name exchange
       conn.send({ type: 'system', payload: { name: userName } });
-      setStep('chat');
+      
+      if (!isBackground) {
+        setStep('chat');
+      }
       
       // Start key exchange
       sendKeyExchange();
 
-      // Send queued messages for this peer
-      const queue = queuedMessages[conn.peer] || [];
-      if (queue.length > 0) {
-        queue.forEach(msg => {
-          conn.send({ type: 'chat', payload: { ...msg, status: 'sent' } });
-        });
-        setMessages(prev => prev.map(m => {
-          const queued = queue.find(q => q.id === m.id);
-          return queued ? { ...m, status: 'sent' } : m;
-        }));
-        setQueuedMessages(prev => {
-          const next = { ...prev };
-          delete next[conn.peer];
-          return next;
-        });
-      }
+      // Note: Queued message delivery is now handled by the encryption effect
+      // for better security, or as a fallback here if not encrypted.
+      setTimeout(() => {
+        if (!isEncrypted) {
+           const queue = queuedMessages[conn.peer] || [];
+           if (queue.length > 0) {
+              queue.forEach(msg => {
+                conn.send({ type: 'chat', payload: { ...msg, status: 'sent' } });
+              });
+              setMessages(prev => prev.map(m => {
+                const queued = queue.find(q => q.id === m.id);
+                return queued ? { ...m, status: 'sent' } : m;
+              }));
+              setQueuedMessages(prev => {
+                const next = { ...prev };
+                delete next[conn.peer];
+                return next;
+              });
+           }
+        }
+      }, 5000);
     });
 
     conn.on('data', async (data: any) => {
@@ -503,7 +704,10 @@ export default function App() {
           }
         }
         
-        setMessages((prev) => [...prev, { ...msg, isMe: false, status: 'read' }]);
+        const isActuallyReading = step === 'chat' && remoteId === msg.senderId && document.visibilityState === 'visible';
+        const finalStatus = isActuallyReading ? 'read' : 'delivered';
+        
+        setMessages((prev) => [...prev, { ...msg, isMe: false, status: finalStatus }]);
         
         // Trigger notification if tab is backgrounded
         if (document.visibilityState !== 'visible') {
@@ -516,12 +720,12 @@ export default function App() {
           }
         }
 
-        // Send read receipt back
-        conn.send({ type: 'receipt', payload: { messageId: msg.id, status: 'read' } });
+        // Send status receipt back (either delivered or read)
+        conn.send({ type: 'receipt', payload: { messageId: msg.id, status: finalStatus } });
       } else if (peerData.type === 'receipt') {
         const { messageId, status } = peerData.payload;
         setMessages((prev) => 
-          prev.map(m => m.id === messageId ? { ...m, status } : m)
+          prev.map(m => m.id === messageId ? { ...m, status: (m.status === 'read' ? 'read' : status) } : m)
         );
       } else if (peerData.type === 'system') {
         if (peerData.payload.name) {
@@ -859,16 +1063,24 @@ export default function App() {
 
       recorder.onstop = async () => {
         const audioBlob = new Blob(chunks, { type: 'audio/webm' });
-        await sendVoiceMessage(audioBlob);
+        if (audioBlob.size > 1000) { // Only send if it's more than just noise
+          await sendVoiceMessage(audioBlob);
+        }
         stream.getTracks().forEach(track => track.stop());
+        setRecordingDuration(0);
       };
 
       recorder.start();
       setMediaRecorder(recorder);
       setIsRecording(true);
+      
+      setRecordingDuration(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
     } catch (err) {
       console.error('Error accessing microphone:', err);
-      alert('Could not access microphone for recording.');
+      setLastError('Microphone access denied. Enable permissions to record voice.');
     }
   };
 
@@ -877,6 +1089,22 @@ export default function App() {
       mediaRecorder.stop();
       setIsRecording(false);
       setMediaRecorder(null);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+    }
+  };
+
+  const cancelRecording = () => {
+    if (mediaRecorder && isRecording) {
+      mediaRecorder.onstop = () => {
+        if (mediaRecorder.stream) {
+          mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        }
+        setRecordingDuration(0);
+      };
+      mediaRecorder.stop();
+      setIsRecording(false);
+      setMediaRecorder(null);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
     }
   };
 
@@ -1456,6 +1684,7 @@ export default function App() {
                             const contact = contacts.find(c => c.id === id);
                             const threadMessages = messages.filter(m => m.senderId === id || (m.isMe && ((m as any).receiverId === id || (m as any).targetId === id)));
                             const lastMsg = threadMessages[threadMessages.length - 1];
+                            const unreadCountForThread = threadMessages.filter(m => !m.isMe && m.status !== 'read').length;
                             
                             if (!lastMsg) return null;
 
@@ -1467,25 +1696,41 @@ export default function App() {
                               >
                                 <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-lg font-bold text-white relative">
                                   {(contact?.name || 'U').substring(0, 1).toUpperCase()}
-                                  {(connection?.peer === id && connectionStatus === 'connected') && (
+                                  {(connection?.peer === id && connectionStatus === 'connected') ? (
                                     <div className="absolute bottom-0 right-0 w-3 h-3 bg-brand-blue border-2 border-app-bg rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-                                  )}
+                                  ) : unreadCountForThread > 0 ? (
+                                    <div className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-lg border border-app-bg animate-bounce">
+                                       {unreadCountForThread}
+                                    </div>
+                                  ) : null}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center justify-between mb-0.5">
-                                    <h4 className="font-bold text-gray-100 truncate">{contact?.name || `Node-${id.substring(0,8)}`}</h4>
+                                    <h4 className={`font-bold truncate ${unreadCountForThread > 0 ? 'text-white' : 'text-gray-100'}`}>{contact?.name || `Node-${id.substring(0,8)}`}</h4>
                                     <span className="text-[10px] text-gray-600 font-mono">
                                       {new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                     </span>
                                   </div>
-                                  <p className="text-[11px] text-gray-500 truncate italic flex items-center gap-1">
-                                    {lastMsg.isMe && <span className="text-brand-blue font-bold tracking-tighter mr-0.5">YOU:</span>}
-                                    {lastMsg.file ? (
-                                      <span className="flex items-center gap-1"><FileText size={10} /> Attachment</span>
-                                    ) : (
-                                      lastMsg.text
-                                    )}
-                                  </p>
+                                  <div className="flex items-center justify-between">
+                                     <p className={`text-[11px] truncate italic flex items-center gap-1 ${unreadCountForThread > 0 ? 'text-gray-300 font-bold' : 'text-gray-500'}`}>
+                                       {lastMsg.isMe && (
+                                         <span className="flex items-center mr-0.5">
+                                           {lastMsg.status === 'read' ? (
+                                             <CheckCheck size={10} className="text-brand-blue mr-1" />
+                                           ) : (
+                                             <Check size={10} className="text-gray-600 mr-1" />
+                                           )}
+                                           <span className="text-brand-blue font-black tracking-tighter">YOU:</span>
+                                         </span>
+                                       )}
+                                       {lastMsg.file ? (
+                                         <span className="flex items-center gap-1"><FileText size={10} /> Attachment</span>
+                                       ) : (
+                                         lastMsg.text
+                                       )}
+                                     </p>
+                                     {unreadCountForThread > 0 && <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse ml-2" />}
+                                  </div>
                                 </div>
                                 <div className="opacity-0 group-hover:opacity-100 transition-opacity">
                                    <ChevronLeft size={16} className="text-gray-600 rotate-180" />
@@ -1776,23 +2021,37 @@ export default function App() {
                       {msg.text && <p className="text-sm whitespace-pre-wrap leading-normal mb-1">{msg.text}</p>}
                       {msg.file && (
                         <div className="mb-1 p-2 bg-black/20 rounded-lg border border-white/5">
-                           <div className="flex items-center gap-3">
-                              <FileText size={28} className="text-brand-blue shrink-0" />
-                              <div className="flex-1 min-w-0">
-                                 <p className="text-xs font-bold truncate">{msg.file.name}</p>
-                                 <p className="text-[10px] text-gray-400 capitalize">{formatFileSize(msg.file.size)}</p>
-                              </div>
-                              {msg.file.url && (
-                                <a href={msg.file.url} download={msg.file.name} className="text-brand-blue p-1">
-                                   <Download size={18} />
-                                </a>
-                              )}
-                           </div>
+                           {msg.file.type.startsWith('audio/') ? (
+                             <VoiceMessage bubble={msg} />
+                           ) : (
+                             <div className="flex items-center gap-3">
+                                <FileText size={28} className="text-brand-blue shrink-0" />
+                                <div className="flex-1 min-w-0">
+                                   <p className="text-xs font-bold truncate">{msg.file.name}</p>
+                                   <p className="text-[10px] text-gray-400 capitalize">{formatFileSize(msg.file.size)}</p>
+                                </div>
+                                {msg.file.url && (
+                                  <a href={msg.file.url} download={msg.file.name} className="text-brand-blue p-1">
+                                     <Download size={18} />
+                                  </a>
+                                )}
+                             </div>
+                           )}
                         </div>
                       )}
                       <div className="flex items-center justify-end gap-1 self-end">
                         <span className="text-[9px] text-gray-400 uppercase">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        {msg.isMe && <Check size={12} className={msg.status === 'read' ? 'text-blue-400' : 'text-gray-400'} />}
+                        {msg.isMe && (
+                          <div className="flex items-center">
+                            {msg.status === 'queued' ? (
+                              <Clock size={10} className="text-gray-500" />
+                            ) : msg.status === 'sent' ? (
+                              <Check size={12} className="text-gray-400" />
+                            ) : (
+                              <CheckCheck size={12} className={msg.status === 'read' ? 'text-brand-blue' : 'text-gray-500'} />
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                   </motion.div>
@@ -1809,50 +2068,86 @@ export default function App() {
                 <div ref={messagesEndRef} />
               </div>
               <div className="bg-app-sec p-2 flex items-end gap-2 relative z-10">
-                <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-white">
-                  <Paperclip size={24} />
-                </button>
-                <input type="file" ref={fileInputRef} onChange={sendFile} className="hidden" />
-                <div className="flex-1 bg-app-bg rounded-[24px] flex items-end px-4 py-2 min-h-[48px]">
-                   <textarea
-                     placeholder="Type a message"
-                     rows={1}
-                     value={messageText}
-                     onChange={(e) => {
-                       setMessageText(e.target.value);
-                       handleTyping(e.target.value.length > 0);
-                       
-                       // Clear timeout if exists
-                       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-                       
-                       // Set timeout to stop typing
-                       typingTimeoutRef.current = setTimeout(() => {
-                         handleTyping(false);
-                       }, 2000);
-                     }}
-                     className="w-full bg-transparent border-none outline-none resize-none text-sm py-1.5 text-gray-100"
-                     onKeyDown={(e) => {
-                       if (e.key === 'Enter' && !e.shiftKey) {
-                         e.preventDefault();
-                         if (messageText.trim()) {
-                           sendMessage(messageText.trim());
-                           setMessageText('');
-                         }
-                       }
-                     }}
-                   />
-                </div>
-                <button 
-                  onClick={() => {
-                    if (messageText.trim()) {
-                      sendMessage(messageText.trim());
-                      setMessageText('');
-                    }
-                  }} 
-                  className={`p-3 rounded-full shadow-lg transition-all ${messageText.trim() ? 'bg-brand-blue text-white scale-110' : 'bg-gray-800 text-gray-600'}`}
-                >
-                  <Send size={20} />
-                </button>
+                {!isRecording ? (
+                  <>
+                    <button onClick={() => fileInputRef.current?.click()} className="p-3 text-gray-400 hover:text-white">
+                      <Paperclip size={24} />
+                    </button>
+                    <input type="file" ref={fileInputRef} onChange={sendFile} className="hidden" />
+                    <div className="flex-1 bg-app-bg rounded-[24px] flex items-end px-4 py-2 min-h-[48px]">
+                       <textarea
+                         placeholder="Type a message"
+                         rows={1}
+                         value={messageText}
+                         onChange={(e) => {
+                           setMessageText(e.target.value);
+                           handleTyping(e.target.value.length > 0);
+                           
+                           // Clear timeout if exists
+                           if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+                           
+                           // Set timeout to stop typing
+                           typingTimeoutRef.current = setTimeout(() => {
+                             handleTyping(false);
+                           }, 2000);
+                         }}
+                         className="w-full bg-transparent border-none outline-none resize-none text-sm py-1.5 text-gray-100"
+                         onKeyDown={(e) => {
+                           if (e.key === 'Enter' && !e.shiftKey) {
+                             e.preventDefault();
+                             if (messageText.trim()) {
+                               sendMessage(messageText.trim());
+                               setMessageText('');
+                             }
+                           }
+                         }}
+                       />
+                    </div>
+                    {messageText.trim() ? (
+                      <button 
+                        onClick={() => {
+                          if (messageText.trim()) {
+                            sendMessage(messageText.trim());
+                            setMessageText('');
+                          }
+                        }} 
+                        className="p-3 rounded-full shadow-lg transition-all bg-brand-blue text-white scale-110"
+                      >
+                        <Send size={20} />
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={startRecording}
+                        className="p-3 rounded-full shadow-lg transition-all bg-gray-800 text-gray-400 hover:text-brand-blue"
+                      >
+                        <Mic size={24} />
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex-1 flex items-center gap-4 bg-brand-blue/10 rounded-full px-6 py-3 border border-brand-blue/20">
+                    <div className="flex items-center gap-3 flex-1">
+                      <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                      <span className="text-sm font-mono font-bold text-white tracking-widest">{formatDuration(recordingDuration)}</span>
+                      <div className="flex-1 h-1 bg-white/10 rounded-full overflow-hidden">
+                        <motion.div 
+                          className="h-full bg-brand-blue"
+                          initial={{ width: 0 }}
+                          animate={{ width: "100%" }}
+                          transition={{ duration: 60, ease: "linear" }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                       <button onClick={cancelRecording} className="p-2 text-gray-400 hover:text-white uppercase text-[10px] font-black tracking-widest">
+                          Cancel
+                       </button>
+                       <button onClick={stopRecording} className="p-3 bg-brand-blue text-white rounded-full shadow-lg animate-bounce">
+                          <StopCircle size={24} />
+                       </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </motion.div>
           )}
