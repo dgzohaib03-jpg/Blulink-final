@@ -13,6 +13,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, CheckCheck, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X, Play, Pause, Moon, Sun } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
+import { bluetoothMesh, MeshNode } from './lib/bluetoothMesh';
 import { Message, PeerData, Contact, CallRecord, ContactRequest } from './types';
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react';
 import { 
@@ -148,6 +149,28 @@ export default function App() {
   const [showId, setShowId] = useState(false);
   const [deviceInfo, setDeviceInfo] = useState<any>(null);
   const [isOffline, setIsOffline] = useState(false);
+  const [networkType, setNetworkType] = useState<string>('unknown');
+
+  useEffect(() => {
+    const checkNetwork = async () => {
+      if (Capacitor.isNativePlatform()) {
+        const { Network } = await import('@capacitor/network');
+        const status = await Network.getStatus();
+        setIsOffline(!status.connected);
+        setNetworkType(status.connectionType);
+        
+        Network.addListener('networkStatusChange', status => {
+          setIsOffline(!status.connected);
+          setNetworkType(status.connectionType);
+        });
+      } else {
+        setIsOffline(!navigator.onLine);
+        window.addEventListener('online', () => setIsOffline(false));
+        window.addEventListener('offline', () => setIsOffline(true));
+      }
+    };
+    checkNetwork();
+  }, []);
   const [copySuccess, setCopySuccess] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
   const [newContactId, setNewContactId] = useState('');
@@ -324,83 +347,72 @@ export default function App() {
 
   // Background Mesh Discovery Effect
   useEffect(() => {
-    let scanInterval: NodeJS.Timeout;
-    
     const runDiscovery = async () => {
-      // Don't run discovery during onboarding if that was a state (though current state suggest it starts in discovery)
       if (step === 'onboarding' as any) return;
       
-      const isNative = Capacitor.isNativePlatform();
+      await bluetoothMesh.initialize();
       
-      if (isNative) {
-        // Native BLE Persistent Scan
-        try {
-          await BleClient.initialize();
-          const isBleEnabled = await BleClient.isEnabled();
+      if (peerId && userName) {
+        bluetoothMesh.startAdvertising(peerId, userName, (deviceId, data) => {
+          console.log('[Mesh] Received packet via Bluetooth:', data);
+          const peerData = data as PeerData;
           
-          if (isBleEnabled && !isScanningActive) {
-            setIsScanningActive(true);
-            await BleClient.requestLEScan(
-              { services: [] },
-              (result) => {
-                if (result.device.name?.includes('BlueLink') || result.device.name?.includes('Mesh')) {
-                  const newNode = {
-                    id: `bluelink-${result.device.deviceId}`,
-                    name: result.device.name || 'BT Mesh Node',
-                    signal: result.rssi || -70,
-                    dist: result.rssi ? Math.abs(result.rssi) / 10 : 5,
-                    type: 'unknown' as const
-                  };
-                  
-                  setDiscoveredNodes(prev => {
-                    if (prev.find(n => n.id === newNode.id)) return prev;
-                    return [newNode, ...prev].sort((a, b) => b.signal - a.signal);
-                  });
-                }
-              }
-            );
-          }
-        } catch (e) {
-          console.error('Persistent BT Scan Error:', e);
-        }
-      } else {
-        // Browser/Simulation Persistent Discovery
-        if (!isScanningActive) {
-          setIsScanningActive(true);
-          const potentialNodes = [
-            ...contacts.map(c => ({ id: c.id, name: c.name, signal: -45, dist: 1.2, avatar: c.avatar, type: 'known' as const })),
-            { id: 'bluelink-nd-55', name: 'Mesh Relay Delta', signal: -82, dist: 15.4, type: 'unknown' as const },
-            { id: 'bluelink-nd-67', name: 'Remote Terminal', signal: -67, dist: 8.9, type: 'unknown' as const },
-            { id: 'bluelink-nd-94', name: 'Hidden Segment', signal: -94, dist: 24.1, type: 'unknown' as const },
-            { id: 'bluelink-nd-12', name: 'Node-Prime', signal: -52, dist: 3.4, type: 'unknown' as const },
-            { id: 'bluelink-nd-88', name: 'Relay-Alpha', signal: -78, dist: 12.1, type: 'unknown' as const },
-            { id: 'bluelink-nd-03', name: 'Ghost_Net', signal: -89, dist: 19.8, type: 'unknown' as const }
-          ];
-
-          potentialNodes.forEach((node, i) => {
-            setTimeout(() => {
-              setDiscoveredNodes(prev => {
-                if (prev.find(n => n.id === node.id)) return prev;
-                return [...prev, node].sort((a, b) => b.signal - a.signal);
+          if (peerData.type === 'chat') {
+            const msg = peerData.payload;
+            setMessages(prev => {
+              if (prev.find(m => m.id === msg.id)) return prev;
+              const isActuallyReading = step === 'chat' && remoteId === msg.senderId && document.visibilityState === 'visible';
+              return [...prev, { ...msg, isMe: false, status: isActuallyReading ? 'read' : 'delivered' }];
+            });
+            
+            // Auto-send receipt
+            const targetNode = discoveredNodes.find(n => n.id === msg.senderId);
+            if (targetNode) {
+              bluetoothMesh.sendData(targetNode.id.replace('bluelink-', ''), { 
+                type: 'receipt', 
+                payload: { messageId: msg.id, status: 'delivered' } 
               });
-            }, i * 1000);
-          });
-        }
+            }
+
+            if (document.visibilityState !== 'visible') {
+              setUnreadCount(prev => prev + 1);
+              if (Notification.permission === 'granted') {
+                new Notification(`BlueLink Mesh: ${msg.senderName}`, {
+                  body: msg.text || 'Shared a file',
+                  icon: '/favicon.ico'
+                });
+              }
+            }
+          } else if (peerData.type === 'receipt') {
+            const { messageId, status } = peerData.payload;
+            setMessages((prev) => 
+              prev.map(m => m.id === messageId ? { ...m, status: (m.status === 'read' ? 'read' : status) } : m)
+            );
+          } else if (peerData.type === 'system') {
+            if (peerData.payload.name) setRemoteName(peerData.payload.name);
+            if (peerData.payload.avatar) setRemoteAvatar(peerData.payload.avatar);
+          }
+        });
       }
+
+      bluetoothMesh.startDiscovery((node) => {
+        setDiscoveredNodes(prev => {
+          const exists = prev.find(n => n.id === node.id);
+          if (exists) {
+            // Update signal and distance
+            return prev.map(n => n.id === node.id ? { ...n, signal: node.signal, dist: node.dist } : n);
+          }
+          return [...prev, { ...node, type: contactsRef.current.some(c => c.id === node.id) ? 'known' : 'unknown' } as any].sort((a, b) => b.signal - a.signal);
+        });
+      });
     };
 
     runDiscovery();
     
-    // Auto-refresh simulation data or ensure BLE is still active every 60s
-    scanInterval = setInterval(runDiscovery, 60000);
-
     return () => {
-      clearInterval(scanInterval);
-      if (Capacitor.isNativePlatform()) {
-        BleClient.stopLEScan().catch(() => {});
-      }
+      bluetoothMesh.stopDiscovery();
     };
-  }, [contacts]); // Removed step from dependency to keep it running in background
+  }, [peerId, userName, contacts]);
 
   const startBluetoothDiscovery = async () => {
     // This is now handled by the persistent effect, 
@@ -912,21 +924,35 @@ export default function App() {
 
   const connectToPeer = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!peer || peer.destroyed || !remoteId.trim()) return;
-    
+    const idToConnect = normalizePeerId(remoteId);
+    if (!idToConnect) return;
+
     setStep('chat');
-    setRemoteName('Connecting...');
+    setRemoteId(idToConnect);
     setConnectionStatus('connecting');
     setLastError(null);
+
+    // Check if this is a discovered Bluetooth node
+    const bluetoothNode = discoveredNodes.find(n => n.id === idToConnect);
     
-    let targetId = normalizePeerId(remoteId);
+    if (isOffline && bluetoothNode) {
+      console.log('[Mesh] Connecting to peer via Bluetooth mesh...');
+      setRemoteName(bluetoothNode.name);
+      if (bluetoothNode.avatar) setRemoteAvatar(bluetoothNode.avatar);
+      setConnectionStatus('connected'); // Bluetooth is "always ready" in this simpler mesh mode
+      return;
+    }
+
+    if (!peer || peer.destroyed) {
+      if (isOffline) {
+        setLastError('PeerJS signaling requires internet. Switching to Bluetooth Mesh mode...');
+      }
+      return;
+    }
     
-    setStep('chat');
-    setRemoteName('Connecting...');
-    setConnectionStatus('connecting');
-    setLastError(null);
+    setRemoteName('Routing...');
     
-    console.log(`Initiating mesh tunnel to: ${targetId}`);
+    console.log(`Initiating mesh tunnel to: ${idToConnect}`);
 
     try {
       const conn = peer.connect(targetId, {
@@ -987,6 +1013,16 @@ export default function App() {
       } else {
         connection.send({ type: 'chat', payload: msg });
       }
+    } else if (isOffline && remoteId) {
+       // Attempt Bluetooth Mesh Send if totally offline
+       const targetNode = discoveredNodes.find(n => n.id === remoteId);
+       if (targetNode) {
+          console.log('[Mesh] Sending packet via Bluetooth transport...');
+          bluetoothMesh.sendData(targetNode.id.replace('bluelink-', ''), { type: 'chat', payload: msg });
+          msg.status = 'sent';
+       } else {
+          setQueuedMessages(prev => ({ ...prev, [remoteId]: [...(prev[remoteId] || []), msg] }));
+       }
     } else if (remoteId) {
       // Queue the message
       setQueuedMessages(prev => ({
@@ -1499,8 +1535,13 @@ export default function App() {
               {step === 'chat' ? (
                 <>
                   <h1 className="text-sm font-semibold truncate max-w-[120px]">{remoteName}</h1>
-                  <span className={`text-[10px] ${connectionStatus === 'connected' ? 'text-brand-blue' : 'text-gray-400'}`}>
-                    {connectionStatus === 'connected' ? 'online' : 'connecting...'}
+                  <span className={`text-[10px] ${connectionStatus === 'connected' ? 'text-brand-blue' : 'text-gray-400'} flex items-center gap-1`}>
+                    {connectionStatus === 'connected' ? (
+                      <>
+                        <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
+                        {isOffline ? 'bluetooth mesh' : 'secure tunnel'}
+                      </>
+                    ) : 'connecting...'}
                   </span>
                 </>
               ) : (
@@ -2090,7 +2131,10 @@ export default function App() {
                                            <div className="text-sm font-bold text-gray-200 truncate">{node.name}</div>
                                            {node.type === 'known' && <div className="px-1.5 py-0.5 bg-brand-blue/10 text-[8px] font-black text-brand-blue uppercase rounded shrink-0">Linked</div>}
                                          </div>
-                                         <div className="text-[9px] font-mono text-gray-600 mt-0.5 truncate">UID: {node.id.substring(0, 16)}...</div>
+                                         <div className="text-[9px] font-mono text-gray-600 mt-0.5 truncate flex items-center gap-1">
+                                           <Bluetooth size={8} className="text-brand-blue" />
+                                           MESH DISCOVERY: {node.id.substring(0, 16)}...
+                                         </div>
                                       </div>
                                    </div>
                                    
