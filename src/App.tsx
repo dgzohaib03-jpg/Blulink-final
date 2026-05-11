@@ -153,7 +153,14 @@ export default function App() {
 
   useEffect(() => {
     const checkNetwork = async () => {
-      if (Capacitor.isNativePlatform()) {
+      const isNative = Capacitor.isNativePlatform();
+      setDeviceInfo({
+        platform: isNative ? Capacitor.getPlatform() : 'web',
+        native: isNative,
+        version: '1.0.0-mesh-alpha'
+      });
+
+      if (isNative) {
         const { Network } = await import('@capacitor/network');
         const status = await Network.getStatus();
         setIsOffline(!status.connected);
