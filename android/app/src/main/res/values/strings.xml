@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BlueLink Mesh</string>
+    <string name="title_activity_main">BlueLink Mesh</string>
+    <string name="package_name">com.bluelink.mesh</string>
+    <string name="custom_url_scheme">com.bluelink.mesh</string>
+</resources>

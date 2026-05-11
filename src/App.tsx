@@ -10,10 +10,11 @@ import { Capacitor } from '@capacitor/core';
 import { BleClient } from '@capacitor-community/bluetooth-le';
 import { Peer, DataConnection } from 'peerjs';
 import { motion, AnimatePresence } from 'motion/react';
-import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, CheckCheck, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X, Play, Pause } from 'lucide-react';
+import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, CheckCheck, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X, Play, Pause, Moon, Sun } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import { Message, PeerData, Contact, CallRecord, ContactRequest } from './types';
+import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react';
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -82,13 +83,13 @@ function VoiceMessage({ bubble }: { bubble: Message }) {
              {bubble.file.size ? (bubble.file.size / 1024).toFixed(1) + ' KB' : ''}
            </span>
         </div>
-        <div className="h-1 w-full bg-white/10 rounded-full overflow-hidden relative">
+        <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden relative">
            <div 
-             className="absolute inset-0 bg-brand-blue/30 scale-x-[1.2] origin-left blur-sm" 
+             className="absolute inset-0 bg-brand-blue/20 scale-x-[1.2] origin-left blur-sm shadow-inner" 
              style={{ width: `${progress}%` }} 
            />
            <div 
-             className="h-full bg-brand-blue rounded-full relative z-10" 
+             className="h-full bg-brand-blue rounded-full relative z-10 shadow-[0_0_8px_rgba(67,56,202,0.5)]" 
              style={{ width: `${progress}%` }} 
            />
         </div>
@@ -105,10 +106,27 @@ export default function App() {
     if (saved) return saved;
     return `Node-${Math.floor(Math.random() * 9000) + 1000}`;
   });
+  const [userAvatar, setUserAvatar] = useState<string>(() => {
+    return localStorage.getItem('bluelink_avatar') || '';
+  });
+  useEffect(() => {
+    localStorage.setItem('bluelink_name', userName);
+  }, [userName]);
+  useEffect(() => {
+    localStorage.setItem('bluelink_avatar', userAvatar);
+  }, [userAvatar]);
   const [peerId, setPeerId] = useState<string>(() => {
     return localStorage.getItem('bluelink_peer_id') || '';
   });
   const [lastError, setLastError] = useState<string | null>(null);
+  const normalizePeerId = (id: string) => {
+    const trimmed = id.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('bluelink-')) return trimmed;
+    // Special case: if it looks like a UUID or a short ID, it's very likely a BlueLink ID missing its prefix
+    return `bluelink-${trimmed}`;
+  };
+
   const [peer, setPeer] = useState<Peer | null>(null);
   const [connection, setConnection] = useState<DataConnection | null>(null);
   const [messages, setMessages] = useState<Message[]>(() => {
@@ -120,11 +138,13 @@ export default function App() {
   }, [messages]);
   const [remoteId, setRemoteId] = useState<string>('');
   const [remoteName, setRemoteName] = useState<string>('');
+  const [remoteAvatar, setRemoteAvatar] = useState<string>('');
   const [step, setStep] = useState<'discovery' | 'chat' | 'account' | 'calls' | 'contacts' | 'nearby'>('discovery');
-  const [discoveredNodes, setDiscoveredNodes] = useState<{id: string, name: string, signal: number, dist: number, type: 'known' | 'unknown'}[]>([]);
+  const [discoveredNodes, setDiscoveredNodes] = useState<{id: string, name: string, signal: number, dist: number, avatar?: string, type: 'known' | 'unknown'}[]>([]);
   const [isScanningActive, setIsScanningActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
+  const [remoteIsTyping, setRemoteIsTyping] = useState(false);
+  const [lastTypingSent, setLastTypingSent] = useState(0);
   const [showId, setShowId] = useState(false);
   const [deviceInfo, setDeviceInfo] = useState<any>(null);
   const [isOffline, setIsOffline] = useState(false);
@@ -187,11 +207,36 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeMobileTab, setActiveMobileTab] = useState<'mesh' | 'id'>('mesh');
   const [syncingPeerId, setSyncingPeerId] = useState<string | null>(null);
+  const [showSecurityInfo, setShowSecurityInfo] = useState(false);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
   const remoteAudioRef = useRef<HTMLAudioElement>(null);
+
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const base64String = reader.result as string;
+        setUserAvatar(base64String);
+        // Send to current peer if connected
+        if (connection && connection.open) {
+          connection.send({ type: 'system', payload: { name: userName, avatar: base64String } });
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
 
   // Handle Tab Visibility
   useEffect(() => {
@@ -323,7 +368,7 @@ export default function App() {
         if (!isScanningActive) {
           setIsScanningActive(true);
           const potentialNodes = [
-            ...contacts.map(c => ({ id: c.id, name: c.name, signal: -45, dist: 1.2, type: 'known' as const })),
+            ...contacts.map(c => ({ id: c.id, name: c.name, signal: -45, dist: 1.2, avatar: c.avatar, type: 'known' as const })),
             { id: 'bluelink-nd-55', name: 'Mesh Relay Delta', signal: -82, dist: 15.4, type: 'unknown' as const },
             { id: 'bluelink-nd-67', name: 'Remote Terminal', signal: -67, dist: 8.9, type: 'unknown' as const },
             { id: 'bluelink-nd-94', name: 'Hidden Segment', signal: -94, dist: 24.1, type: 'unknown' as const },
@@ -421,6 +466,9 @@ export default function App() {
       newPeer.on('open', (id) => {
         setPeerId(id);
         localStorage.setItem('bluelink_peer_id', id);
+        if (!id.startsWith('bluelink-')) {
+          console.error('CRITICAL: Peer ID missing mesh prefix:', id);
+        }
         console.log('My BlueLink Mesh Node ID is: ' + id);
       });
 
@@ -450,7 +498,12 @@ export default function App() {
             message = 'Your browser does not support P2P features.';
             break;
           case 'disconnected':
-            message = 'Disconnected from the signalling server.';
+            message = 'Disconnected from server. Attempting to reconnect...';
+            setTimeout(() => {
+              if (newPeer && !newPeer.destroyed && newPeer.disconnected) {
+                newPeer.reconnect();
+              }
+            }, 3000);
             break;
           case 'invalid-id':
             message = 'The Peer ID provided is invalid.';
@@ -471,17 +524,34 @@ export default function App() {
             message = 'The signalling server is currently unavailable.';
             break;
           case 'socket-error':
-            message = 'Socket error. Connection to server failed.';
+            message = 'Socket error. Connection to server failed. Retrying...';
+            setTimeout(() => {
+              if (newPeer && !newPeer.destroyed) {
+                newPeer.reconnect();
+              }
+            }, 5000);
             break;
           case 'socket-closed':
-            message = 'Socket connection closed unexpectedly.';
+            message = 'Connection closed unexpectedly. Retrying...';
+            setTimeout(() => {
+              if (newPeer && !newPeer.destroyed) {
+                newPeer.reconnect();
+              }
+            }, 5000);
             break;
           case 'unavailable-id':
             message = 'The Peer ID is already taken.';
             break;
           default:
             if (err.message && err.message.includes('Could not connect to peer')) {
-              message = 'Could not establish connection. The peer may be behind a restrictive firewall or offline.';
+              const matches = err.message.match(/Could not connect to peer ([^ ]+)/);
+              const failedId = matches ? matches[1] : '';
+              
+              if (failedId && !failedId.startsWith('bluelink-')) {
+                message = `Peer ID missing 'bluelink-' prefix. Ensure the full ID is used.`;
+              } else {
+                message = 'Encryption tunnel failed. The peer may be offline or behind a restrictive network.';
+              }
             }
         }
 
@@ -506,7 +576,7 @@ export default function App() {
   // Auto-sync Effect for Queued Messages
   useEffect(() => {
     // Only attempt auto-connect if we have a peer object and aren't already busy
-    if (!peer || connection || connectionStatus === 'connecting' || syncingPeerId) return;
+    if (!peer || peer.destroyed || connection || connectionStatus === 'connecting' || syncingPeerId) return;
 
     const peersWithQueue = Object.keys(queuedMessages).filter(id => (queuedMessages[id] || []).length > 0);
     if (peersWithQueue.length === 0) return;
@@ -615,7 +685,7 @@ export default function App() {
       setConnectionStatus('connected');
       setRemoteId(conn.peer);
       // Wait for name exchange
-      conn.send({ type: 'system', payload: { name: userName } });
+      conn.send({ type: 'system', payload: { name: userName, avatar: userAvatar } });
       
       if (!isBackground) {
         setStep('chat');
@@ -727,23 +797,36 @@ export default function App() {
         setMessages((prev) => 
           prev.map(m => m.id === messageId ? { ...m, status: (m.status === 'read' ? 'read' : status) } : m)
         );
+      } else if (peerData.type === 'delete-message') {
+        const { messageId } = peerData.payload;
+        setMessages((prev) => prev.map(m => m.id === messageId ? { ...m, text: 'This message was deleted', deleted: true, file: undefined } : m));
       } else if (peerData.type === 'system') {
         if (peerData.payload.name) {
           setRemoteName(peerData.payload.name);
-          
+        }
+        if (peerData.payload.avatar !== undefined) {
+          setRemoteAvatar(peerData.payload.avatar);
+          // Also update contact if it exists
+          setContacts(prev => prev.map(c => 
+            c.id === conn.peer ? { ...c, avatar: peerData.payload.avatar } : c
+          ));
+        }
+
+        if (peerData.payload.name) {
           // Auto-prompt to save contact if unknown
           const isKnown = contactsRef.current.some(c => c.id === conn.peer);
           if (!isKnown && !showSavePrompt) {
             setPotentialContact({
               id: conn.peer,
               name: peerData.payload.name || `Node-${conn.peer.substring(0, 4)}`,
+              avatar: peerData.payload.avatar,
               addedAt: Date.now()
             });
             setShowSavePrompt(true);
           }
         }
       } else if (peerData.type === 'typing') {
-        setIsTyping(peerData.payload.isTyping);
+        setRemoteIsTyping(peerData.payload.isTyping);
       }
     });
 
@@ -752,6 +835,9 @@ export default function App() {
       setConnectionStatus('disconnected');
       setIsEncrypted(false);
       setSharedSecret(null);
+      setRemoteIsTyping(false);
+      setRemoteName('');
+      setRemoteAvatar('');
       setStep('discovery');
       alert('Peer disconnected');
     });
@@ -765,7 +851,7 @@ export default function App() {
   // Scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isTyping]);
+  }, [messages, remoteIsTyping]);
 
   useEffect(() => {
     if (callStatus === 'active') {
@@ -787,10 +873,23 @@ export default function App() {
     }
   }, [remoteStream]);
 
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  const deleteMessage = (messageId: string) => {
+    // Only allow deleting own messages that aren't already deleted
+    const msg = messages.find(m => m.id === messageId);
+    if (!msg || !msg.isMe || msg.deleted) return;
+
+    setMessages(prev => prev.map(m => m.id === messageId ? { ...m, text: 'You deleted this message', deleted: true, file: undefined } : m));
+    
+    if (connection && connection.open) {
+      connection.send({
+        type: 'delete-message',
+        payload: { messageId }
+      });
+    }
+  };
+
+  const onEmojiClick = (emojiData: any) => {
+    setMessageText(prev => prev + emojiData.emoji);
   };
 
   useEffect(() => {
@@ -813,22 +912,46 @@ export default function App() {
 
   const connectToPeer = (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!peer || !remoteId.trim()) return;
+    if (!peer || peer.destroyed || !remoteId.trim()) return;
     
     setStep('chat');
     setRemoteName('Connecting...');
     setConnectionStatus('connecting');
     setLastError(null);
     
-    if (!remoteId.startsWith('bluelink-')) {
-       console.warn('Connecting to non-BlueLink node');
-    }
+    let targetId = normalizePeerId(remoteId);
+    
+    setStep('chat');
+    setRemoteName('Connecting...');
+    setConnectionStatus('connecting');
+    setLastError(null);
+    
+    console.log(`Initiating mesh tunnel to: ${targetId}`);
 
-    const conn = peer.connect(remoteId, {
-      reliable: true,
-      connectionPriority: 1
-    });
-    setupConnection(conn);
+    try {
+      const conn = peer.connect(targetId, {
+        reliable: true,
+        connectionPriority: 1,
+        metadata: { name: userName, avatar: userAvatar }
+      });
+      
+      setupConnection(conn);
+      
+      // Safety timeout for connection establishment
+      const timeout = setTimeout(() => {
+        if (conn && (!conn.open && connectionStatus === 'connecting')) {
+          console.warn('Connection attempt timed out for target:', targetId);
+          setLastError('Connection attempt timed out. Trying to re-route...');
+          // Check if there was an alternative ID we could try
+        }
+      }, 15000);
+      
+      return () => clearTimeout(timeout);
+    } catch (err) {
+      console.error('Immediate connection error:', err);
+      setConnectionStatus('disconnected');
+      setLastError('Failed to initiate connection. Peer may be invalid.');
+    }
   };
 
   const sendMessage = async (text: string) => {
@@ -845,7 +968,7 @@ export default function App() {
       status: connection ? 'sent' : 'queued'
     };
 
-    if (connection) {
+    if (connection && connection.open) {
       if (sharedSecret) {
         try {
           const { iv, encryptedData } = await encryptData(text, sharedSecret);
@@ -882,14 +1005,19 @@ export default function App() {
   };
 
   const handleTyping = (typing: boolean) => {
-    if (connection) {
-      connection.send({ type: 'typing', payload: { isTyping: typing } });
+    if (connection && connection.open) {
+      const now = Date.now();
+      // Send at most every 1.5 seconds unless state changed to false
+      if (!typing || now - lastTypingSent > 1500) {
+        connection.send({ type: 'typing', payload: { isTyping: typing } });
+        if (typing) setLastTypingSent(now);
+      }
     }
   };
 
   const sendFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!connection || !file) return;
+    if (!connection || !connection.open || !file) return;
 
     try {
       const arrayBuffer = await file.arrayBuffer();
@@ -958,7 +1086,7 @@ export default function App() {
   };
 
   const startCall = async () => {
-    if (!peer || !remoteId || callStatus !== 'idle') return;
+    if (!peer || peer.destroyed || !remoteId || callStatus !== 'idle') return;
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -1186,7 +1314,7 @@ export default function App() {
     setContacts(contacts.filter(c => c.id !== id));
   };
 
-  const sendContactRequest = (id: string, name: string) => {
+  const sendContactRequest = (id: string, name: string, avatar?: string) => {
     if (contacts.find(c => c.id === id)) return;
     if (contactRequests.find(r => r.senderId === id)) return;
 
@@ -1194,6 +1322,7 @@ export default function App() {
       id: Math.random().toString(36).substring(7),
       senderId: id,
       senderName: name,
+      senderAvatar: avatar,
       timestamp: Date.now(),
       status: 'pending'
     };
@@ -1210,6 +1339,7 @@ export default function App() {
       const newContact: Contact = {
         id: request.senderId,
         name: request.senderName,
+        avatar: request.senderAvatar,
         addedAt: Date.now()
       };
       setContacts(prev => {
@@ -1243,12 +1373,14 @@ export default function App() {
   };
 
   const connectToContact = (id: string, name: string) => {
+    const contact = contacts.find(c => c.id === id);
+    if (contact?.avatar) setRemoteAvatar(contact.avatar);
     setRemoteId(id);
     setRemoteName(name);
     setStep('chat');
     setConnectionStatus('connecting');
     setLastError(null);
-    if (!peer) return;
+    if (!peer || peer.destroyed) return;
     const conn = peer.connect(id, {
       reliable: true,
       connectionPriority: 1
@@ -1262,10 +1394,87 @@ export default function App() {
   );
 
   return (
-    <div className="flex flex-col h-screen max-h-screen bg-black font-sans text-gray-100 overflow-hidden items-center justify-center">
-      <div className="flex flex-col w-full h-full max-w-lg bg-app-bg relative overflow-hidden shadow-2xl md:border-x md:border-white/5">
+    <div className="flex flex-col h-screen max-h-screen bg-app-sec font-sans text-gray-100 overflow-hidden items-center justify-center transition-colors">
+      {/* Security Info Modal */}
+      <AnimatePresence>
+        {showSecurityInfo && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowSecurityInfo(false)}
+              className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="w-full max-w-md bg-app-sec rounded-3xl border border-white/10 p-6 relative z-10 shadow-2xl overflow-hidden transition-colors"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-brand-blue/10 rounded-full blur-3xl -mr-16 -mt-16" />
+              
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-brand-blue/20 flex items-center justify-center text-brand-blue">
+                    <CheckCheck size={24} />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-black text-white italic leading-none">ZERO CLOUD</h3>
+                    <p className="text-[10px] text-brand-blue font-bold tracking-widest uppercase">Decentralized Mesh Protocol</p>
+                  </div>
+                </div>
+                <button onClick={() => setShowSecurityInfo(false)} className="text-gray-500 hover:text-white p-2">
+                  <X size={24} />
+                </button>
+              </div>
+              
+              <div className="space-y-4 mb-8 text-left">
+                <div className="flex gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+                  <Radio size={24} className="text-brand-blue shrink-0" />
+                  <div>
+                    <h4 className="text-sm font-bold text-white mb-1">Local Mesh Discovery</h4>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Your device scans local airwaves (Bluetooth/Radio) to find peers without needing a global internet directory.
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="flex gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+                  <CheckCheck size={24} className="text-brand-blue shrink-0" />
+                  <div>
+                    <h4 className="text-sm font-bold text-white mb-1">End-to-End Encryption</h4>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Messages are locked with your local hardware key before they ever leave your device. Only your peer can unlock them.
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="flex gap-4 p-4 rounded-2xl bg-white/5 border border-white/5">
+                  <Activity size={24} className="text-brand-blue shrink-0" />
+                  <div>
+                    <h4 className="text-sm font-bold text-white mb-1">P2P Data Residency</h4>
+                    <p className="text-xs text-slate-400 leading-relaxed">
+                      Every piece of data—text, files, and voice—is stored strictly on your device. We have no central database and no cloud access.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              
+              <button 
+                onClick={() => setShowSecurityInfo(false)}
+                className="w-full py-4 bg-brand-blue text-white font-black italic tracking-widest rounded-2xl shadow-[0_0_20px_rgba(59,130,246,0.3)] hover:scale-[1.02] active:scale-[0.98] transition-all"
+              >
+                GOT IT
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <div className="flex flex-col w-full h-full max-w-lg bg-app-bg relative overflow-hidden shadow-2xl md:border-x border-white/5 transition-colors">
         {/* Top Navigation Bar / BlueLink Header */}
-        <header className="flex items-center justify-between px-4 h-16 bg-app-sec border-b border-white/5 z-30 shadow-sm shrink-0">
+        <header className="flex items-center justify-between px-4 h-16 bg-app-sec border-b border-white/5 z-30 shadow-sm shrink-0 transition-colors">
           <div className="flex items-center gap-3 shrink-0">
             {step === 'chat' && (
               <button 
@@ -1275,9 +1484,13 @@ export default function App() {
                 <ChevronLeft size={24} />
               </button>
             )}
-            <div className={`w-10 h-10 rounded-full ${step === 'chat' ? 'bg-brand-blue' : 'bg-brand-blue/10 border border-brand-blue/20'} flex items-center justify-center overflow-hidden`}>
+                <div className={`w-10 h-10 rounded-full ${step === 'chat' ? 'bg-brand-blue shadow-lg shadow-brand-blue/20' : 'bg-brand-blue/10 border border-brand-blue/20'} flex items-center justify-center overflow-hidden relative`}>
               {step === 'chat' ? (
-                <div className="text-white font-bold">{remoteName.substring(0, 1).toUpperCase()}</div>
+                remoteAvatar ? (
+                  <img src={remoteAvatar} alt={remoteName} className="w-full h-full object-cover" />
+                ) : (
+                  <div className="text-white font-bold">{remoteName.substring(0, 1).toUpperCase()}</div>
+                )
               ) : (
                 <Bluetooth size={20} className="text-brand-blue" />
               )}
@@ -1292,7 +1505,7 @@ export default function App() {
                 </>
               ) : (
                 <div className="flex flex-col">
-                  <h1 className="text-lg font-bold text-gray-100 italic tracking-tight leading-none">BlueLink<span className="text-brand-blue">.</span></h1>
+                  <h1 className="text-lg font-black text-brand-primary italic tracking-tight leading-none">BlueLink<span className="text-brand-blue">.</span></h1>
                   <span className="text-[9px] font-bold text-gray-500 uppercase tracking-[0.2em] leading-none mt-0.5">
                     {step === 'account' ? 'Profile' : (step === 'calls' ? 'Calls' : (step === 'contacts' ? 'Contacts' : (step === 'nearby' ? 'Discovery' : 'Direct P2P')))}
                   </span>
@@ -1305,24 +1518,30 @@ export default function App() {
             {step === 'chat' ? (
               <>
                 {callStatus === 'idle' && (
-                  <button onClick={startCall} className="p-2 text-gray-400 hover:text-white transition-colors">
+                  <button onClick={startCall} className="p-2 text-slate-400 hover:text-brand-blue transition-colors">
                     <Phone size={18} />
                   </button>
                 )}
               </>
             ) : (
-              <div className="flex items-center gap-2 mr-1">
-                <div className="p-1.5 px-2.5 border border-white/10 rounded-xl flex items-center gap-2 bg-white/5">
-                   <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
-                   <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Local Mesh</span>
-                </div>
-              </div>
+              <button 
+                onClick={() => setShowSecurityInfo(true)}
+                className="p-1.5 px-2.5 border border-white/10 rounded-xl flex items-center gap-2 bg-white/5 hover:bg-white/10 transition-colors"
+                title="Mesh Security"
+              >
+                 <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
+                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">Mesh Active</span>
+              </button>
             )}
             <button 
               onClick={() => setStep('account')} 
-              className={`p-2 rounded-xl transition-all ${step === 'account' ? 'text-brand-blue bg-brand-blue/10' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
+              className={`p-2 rounded-xl transition-all ${step === 'account' ? 'text-brand-blue bg-brand-blue/10 shadow-inner' : 'text-slate-400 hover:text-brand-blue hover:bg-white/5'} overflow-hidden relative`}
             >
-              <User size={18} />
+              {userAvatar ? (
+                <img src={userAvatar} alt="Profile" className="w-5 h-5 rounded-full object-cover" />
+              ) : (
+                <User size={18} />
+              )}
             </button>
           </div>
         </header>
@@ -1361,24 +1580,38 @@ export default function App() {
               className="flex-1 flex flex-col bg-app-bg px-6 py-8 overflow-y-auto"
             >
               <div className="flex flex-col items-center text-center space-y-6">
-                <div className="relative group">
-                  <div className="w-24 h-24 rounded-full bg-brand-blue flex items-center justify-center text-3xl font-bold text-white shadow-2xl shadow-brand-blue/30 border-4 border-white/10">
-                    {userName.substring(0, 1).toUpperCase()}
+                <div className="relative group cursor-pointer" onClick={() => avatarInputRef.current?.click()}>
+                  <div className="w-24 h-24 rounded-full bg-brand-blue flex items-center justify-center text-3xl font-bold text-white shadow-2xl shadow-brand-blue/30 border-4 border-white/20 overflow-hidden relative">
+                    {userAvatar ? (
+                      <img src={userAvatar} alt={userName} className="w-full h-full object-cover" />
+                    ) : (
+                      userName.substring(0, 1).toUpperCase()
+                    )}
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Scan size={24} className="text-white" />
+                    </div>
                   </div>
-                  <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-black border-2 border-white/10 rounded-full flex items-center justify-center">
+                  <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-app-bg border-2 border-white/10 rounded-full flex items-center justify-center shadow-lg">
                     <div className="w-2.5 h-2.5 rounded-full bg-brand-blue animate-pulse" />
                   </div>
+                  <input 
+                    type="file" 
+                    ref={avatarInputRef} 
+                    onChange={handleAvatarChange} 
+                    accept="image/*" 
+                    className="hidden" 
+                  />
                 </div>
                 
                 <div>
                   <h2 className="text-2xl font-bold text-white tracking-tight">{userName}</h2>
-                  <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-gray-500 mt-1">Mesh Node Identity</p>
+                  <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-slate-400 mt-1">Mesh Node Identity</p>
                 </div>
 
                 {/* Identity QR Section */}
-                <div className="w-full bg-app-sec p-6 rounded-[32px] border border-white/5 shadow-2xl space-y-4">
+                <div className="w-full bg-app-sec p-6 rounded-[32px] border border-white/5 shadow-xl space-y-4">
                   <div className="flex flex-col items-center gap-4">
-                    <div className="p-4 bg-white rounded-3xl shadow-inner">
+                    <div className="p-4 bg-white rounded-3xl shadow-inner border border-white/5">
                       <QRCodeSVG 
                         value={peerId} 
                         size={160}
@@ -1389,14 +1622,14 @@ export default function App() {
                     <div className="space-y-1 text-center w-full">
                       <p className="text-[11px] font-bold text-brand-blue uppercase tracking-widest">Digital Signature</p>
                       <div className="flex items-center gap-2 px-3 py-3 bg-black/40 border border-white/5 rounded-2xl w-full">
-                        <code className="text-[11px] font-mono text-gray-400 truncate flex-1">{peerId}</code>
+                        <code className="text-[11px] font-mono text-slate-400 truncate flex-1">{peerId}</code>
                         <button 
                           onClick={() => {
                             navigator.clipboard.writeText(peerId);
                             setCopySuccess(true);
                             setTimeout(() => setCopySuccess(false), 2000);
                           }}
-                          className="text-brand-blue hover:text-white transition-colors"
+                          className="text-brand-blue hover:text-brand-blue-dark transition-colors"
                         >
                           {copySuccess ? <Check size={16} /> : <Copy size={16} />}
                         </button>
@@ -1407,12 +1640,12 @@ export default function App() {
 
                 <div className="w-full space-y-3 pb-8">
                   <div className="space-y-1 text-left">
-                    <label className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-1">Display Name</label>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-1">Display Name</label>
                     <input 
                       type="text" 
                       value={userName} 
                       onChange={(e) => setUserName(e.target.value)}
-                      className="w-full bg-app-sec border border-white/5 rounded-2xl py-4 px-4 text-white focus:outline-none focus:border-brand-blue/50 transition-colors font-bold"
+                      className="w-full bg-app-sec border border-white/5 rounded-2xl py-4 px-4 text-white focus:outline-none focus:border-brand-blue/50 transition-colors font-bold shadow-sm"
                     />
                   </div>
                   
@@ -1448,13 +1681,13 @@ export default function App() {
                           </div>
                           <div>
                              <h4 className="text-[10px] font-bold text-gray-200">Native Bridge</h4>
-                             <p className="text-[8px] font-bold text-gray-600 uppercase tracking-widest">Capacitor Engine Active</p>
+                             <p className="text-[8px] font-bold text-slate-500 uppercase tracking-widest">Capacitor Engine Active</p>
                           </div>
                        </div>
                        <div className="space-y-2.5 text-left">
                           <div className="flex justify-between items-center">
-                             <span className="text-[9px] text-gray-600 font-bold uppercase">Node Hardware</span>
-                             <span className="text-[10px] text-gray-400 font-mono">{deviceInfo.model || 'Standard Interface'}</span>
+                             <span className="text-[9px] text-slate-500 font-bold uppercase">Node Hardware</span>
+                             <span className="text-[10px] text-slate-400 font-mono">{deviceInfo.model || 'Standard Interface'}</span>
                           </div>
                           <div className="flex justify-between items-center">
                              <span className="text-[9px] text-gray-600 font-bold uppercase">Link Status</span>
@@ -1495,13 +1728,13 @@ export default function App() {
                 {/* Instant Link Section moved here */}
                 <div className="bg-app-sec p-3 rounded-2xl border border-white/5 shadow-xl space-y-3 mb-4">
                   <div className="relative">
-                    <input
-                      type="text"
-                      placeholder="Enter Peer ID for Direct Link"
-                      value={remoteId}
-                      onChange={(e) => setRemoteId(e.target.value)}
-                      className="w-full bg-black/40 border border-white/5 rounded-xl py-3 pl-4 pr-10 text-sm font-mono text-gray-200 outline-none focus:border-brand-blue/50 transition-colors"
-                    />
+                        <input
+                          type="text"
+                          placeholder="Enter Peer ID for Direct Link"
+                          value={remoteId}
+                          onChange={(e) => setRemoteId(e.target.value)}
+                          className="w-full bg-black/40 border border-white/5 rounded-xl py-3 pl-4 pr-10 text-sm font-mono text-gray-200 outline-none focus:border-brand-blue/50 transition-colors shadow-inner"
+                        />
                     <button 
                       onClick={() => setIsScanning(true)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-brand-blue hover:text-white transition-colors"
@@ -1545,8 +1778,12 @@ export default function App() {
                       {contactRequests.map(request => (
                         <div key={request.id} className="flex items-center justify-between p-4 bg-brand-blue/[0.03] border border-brand-blue/20 rounded-[24px] shadow-sm animate-in fade-in slide-in-from-left-4 transition-all hover:bg-brand-blue/5">
                           <div className="flex items-center gap-4 flex-1 min-w-0">
-                             <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-brand-blue font-bold text-sm uppercase shrink-0 border border-brand-blue/20">
-                                {request.senderName.substring(0, 1)}
+                             <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-brand-blue font-bold text-sm uppercase shrink-0 border border-brand-blue/20 overflow-hidden">
+                                {request.senderAvatar ? (
+                                  <img src={request.senderAvatar} alt={request.senderName} className="w-full h-full object-cover" />
+                                ) : (
+                                  request.senderName.substring(0, 1)
+                                )}
                              </div>
                              <div className="truncate">
                                 <div className="text-sm font-bold text-gray-100 truncate">{request.senderName}</div>
@@ -1593,8 +1830,12 @@ export default function App() {
                         key={contact.id}
                         className="flex items-center gap-3 p-4 bg-app-sec/20 border border-white/5 rounded-xl mx-2 mb-2 group"
                       >
-                        <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-lg font-bold text-brand-blue/60">
-                          {contact.name.substring(0, 1).toUpperCase()}
+                        <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-lg font-bold text-brand-blue/60 overflow-hidden">
+                          {contact.avatar ? (
+                            <img src={contact.avatar} alt={contact.name} className="w-full h-full object-cover" />
+                          ) : (
+                            contact.name.substring(0, 1).toUpperCase()
+                          )}
                         </div>
                         <div className="flex-1 min-w-0">
                           <h3 className="font-bold text-gray-200 truncate">{contact.name}</h3>
@@ -1694,20 +1935,24 @@ export default function App() {
                                 onClick={() => connectToContact(id, contact?.name || `Node-${id.substring(0,4)}`)}
                                 className="flex items-center gap-3 p-4 bg-app-sec/40 hover:bg-app-sec/60 rounded-2xl border border-white/5 cursor-pointer transition-all group active:scale-[0.98]"
                               >
-                                <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-lg font-bold text-white relative">
-                                  {(contact?.name || 'U').substring(0, 1).toUpperCase()}
+                                <div className="w-12 h-12 rounded-full bg-brand-blue/10 flex items-center justify-center text-lg font-bold text-white relative overflow-hidden">
+                                  {contact?.avatar ? (
+                                    <img src={contact.avatar} alt={contact.name} className="w-full h-full object-cover" />
+                                  ) : (
+                                    (contact?.name || 'U').substring(0, 1).toUpperCase()
+                                  )}
                                   {(connection?.peer === id && connectionStatus === 'connected') ? (
-                                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-brand-blue border-2 border-app-bg rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                                    <div className="absolute bottom-0 right-0 w-3 h-3 bg-brand-blue border-2 border-app-bg rounded-full shadow-[0_0_8px_rgba(59,130,246,0.5)] z-10" />
                                   ) : unreadCountForThread > 0 ? (
-                                    <div className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-lg border border-app-bg animate-bounce">
+                                    <div className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 bg-red-500 rounded-full flex items-center justify-center text-[10px] font-black text-white shadow-lg border border-app-bg animate-bounce z-10">
                                        {unreadCountForThread}
                                     </div>
                                   ) : null}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex items-center justify-between mb-0.5">
-                                    <h4 className={`font-bold truncate ${unreadCountForThread > 0 ? 'text-white' : 'text-gray-100'}`}>{contact?.name || `Node-${id.substring(0,8)}`}</h4>
-                                    <span className="text-[10px] text-gray-600 font-mono">
+                                    <h4 className={`font-bold truncate ${unreadCountForThread > 0 ? 'text-brand-blue' : 'text-gray-100'}`}>{contact?.name || `Node-${id.substring(0,8)}`}</h4>
+                                    <span className="text-[10px] text-slate-400 font-mono">
                                       {new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                     </span>
                                   </div>
@@ -1756,7 +2001,7 @@ export default function App() {
               className="flex-1 flex flex-col bg-app-bg overflow-hidden"
             >
               {/* Radar Header */}
-              <div className="relative h-64 flex flex-col items-center justify-center overflow-hidden border-b border-white/5">
+              <div className="relative h-64 flex flex-col items-center justify-center overflow-hidden border-b border-white/5 bg-black/40">
                 <div className="absolute inset-0 flex items-center justify-center opacity-20">
                    <div className="w-[100px] h-[100px] border border-brand-blue rounded-full" />
                    <div className="absolute w-[200px] h-[200px] border border-brand-blue/40 rounded-full" />
@@ -1772,14 +2017,25 @@ export default function App() {
                 </div>
 
                 <div className="relative z-10 flex flex-col items-center">
-                  <div className="w-16 h-16 bg-brand-blue/20 rounded-full flex items-center justify-center border border-brand-blue/30 backdrop-blur-md mb-4">
+                  <div className="w-16 h-16 bg-brand-blue/20 rounded-full flex items-center justify-center border border-brand-blue/30 backdrop-blur-md mb-4 shadow-[0_0_30px_rgba(59,130,246,0.3)]">
                     <Radio size={32} className="text-brand-blue animate-pulse" />
                   </div>
-                  <h2 className="text-lg font-bold text-white tracking-widest uppercase">BlueLink Mesh Browser</h2>
-                  <div className="flex items-center gap-2 mt-1">
+                  <h2 className="text-xl font-black text-white tracking-widest italic leading-none">MESH RADAR</h2>
+                  <div className="flex items-center gap-2 mt-2">
                     <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
-                    <span className="text-[9px] font-bold text-gray-500 uppercase tracking-[0.3em]">Decoding Mesh Packets</span>
+                    <span className="text-[10px] font-black text-brand-blue uppercase tracking-[0.3em]">Decoding Local Signals</span>
                   </div>
+                </div>
+                
+                <div className="absolute bottom-4 left-0 right-0 flex justify-center px-8">
+                   <div className="w-full h-1 bg-white/5 rounded-full overflow-hidden">
+                      <motion.div 
+                        className="h-full bg-brand-blue"
+                        initial={{ width: "0%" }}
+                        animate={{ width: "100%" }}
+                        transition={{ duration: 10, repeat: Infinity, ease: "easeInOut" }}
+                      />
+                   </div>
                 </div>
               </div>
               
@@ -1787,8 +2043,11 @@ export default function App() {
                  {/* Discovered Peer List */}
                  <div className="space-y-3">
                     <div className="flex items-center justify-between px-2">
-                       <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-[0.2em]">{discoveredNodes.length} Secure Signatures</h3>
-                       <Activity size={12} className="text-brand-blue animate-pulse" />
+                       <div className="flex items-center gap-2">
+                          <Activity size={12} className="text-brand-blue" />
+                          <h3 className="text-[10px] font-black text-gray-500 uppercase tracking-widest">{discoveredNodes.length} Verified Signatures</h3>
+                       </div>
+                       <button onClick={() => setShowSecurityInfo(true)} className="text-[10px] font-black text-brand-blue/60 uppercase tracking-tighter hover:text-brand-blue">Mesh Security Info</button>
                     </div>
                     
                     <AnimatePresence mode="popLayout">
@@ -1799,7 +2058,7 @@ export default function App() {
                           animate={{ opacity: 1 }}
                           className="p-8 text-center"
                         >
-                          <div className="inline-block px-3 py-1 bg-white/5 border border-white/5 rounded-full text-[9px] font-bold text-gray-600 uppercase tracking-widest animate-pulse">
+                          <div className="inline-block px-3 py-1 bg-white/5 border border-white/5 rounded-full text-[9px] font-bold text-gray-400 uppercase tracking-widest animate-pulse">
                              Optimizing Signal Floor...
                           </div>
                         </motion.div>
@@ -1819,8 +2078,12 @@ export default function App() {
                                       if (node.type === 'known') setRemoteName(node.name);
                                       setStep('chat');
                                    }}>
-                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${node.type === 'known' ? 'bg-brand-blue/20 text-brand-blue' : 'bg-gray-800 text-gray-500'}`}>
-                                         {node.name.substring(0, 1).toUpperCase()}
+                                      <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${node.type === 'known' ? 'bg-brand-blue/20 text-brand-blue' : 'bg-gray-800 text-gray-500'} overflow-hidden`}>
+                                         {node.avatar ? (
+                                           <img src={node.avatar} alt={node.name} className="w-full h-full object-cover" />
+                                         ) : (
+                                           node.name.substring(0, 1).toUpperCase()
+                                         )}
                                       </div>
                                       <div className="text-left truncate">
                                          <div className="flex items-center gap-2">
@@ -2004,64 +2267,100 @@ export default function App() {
                      </div>
                   </div>
                 )}
-                {messages.map((msg) => (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'}`}
-                  >
-                    <div className={`
-                      relative px-3 py-1.5 shadow-md flex flex-col min-w-[80px]
-                      ${msg.isMe ? 'bg-app-bubble-out text-gray-100 rounded-lg rounded-tr-none ml-12' : 'bg-app-bubble-in text-gray-100 rounded-lg rounded-tl-none mr-12'}
-                    `}>
-                      <div className={`absolute top-0 w-2 h-2 ${msg.isMe ? '-right-2' : '-left-2'} overflow-hidden`}>
-                         <div className={`w-4 h-4 rotate-45 ${msg.isMe ? 'bg-app-bubble-out -translate-x-2' : 'bg-app-bubble-in translate-x-2'}`}></div>
-                      </div>
-                      {msg.text && <p className="text-sm whitespace-pre-wrap leading-normal mb-1">{msg.text}</p>}
-                      {msg.file && (
-                        <div className="mb-1 p-2 bg-black/20 rounded-lg border border-white/5">
-                           {msg.file.type.startsWith('audio/') ? (
-                             <VoiceMessage bubble={msg} />
-                           ) : (
-                             <div className="flex items-center gap-3">
-                                <FileText size={28} className="text-brand-blue shrink-0" />
-                                <div className="flex-1 min-w-0">
-                                   <p className="text-xs font-bold truncate">{msg.file.name}</p>
-                                   <p className="text-[10px] text-gray-400 capitalize">{formatFileSize(msg.file.size)}</p>
-                                </div>
-                                {msg.file.url && (
-                                  <a href={msg.file.url} download={msg.file.name} className="text-brand-blue p-1">
-                                     <Download size={18} />
-                                  </a>
-                                )}
-                             </div>
-                           )}
-                        </div>
+                {messages.map((msg, idx) => {
+                  const prevMsg = messages[idx - 1];
+                  const showDateHeader = !prevMsg || 
+                    new Date(prevMsg.timestamp).toDateString() !== new Date(msg.timestamp).toDateString();
+                  
+                  return (
+                    <React.Fragment key={msg.id}>
+                      {showDateHeader && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex justify-center my-6"
+                        >
+                          <span className="bg-white/5 border border-white/5 text-slate-400 text-[9px] font-black uppercase tracking-[0.2em] px-4 py-1.5 rounded-xl shadow-lg backdrop-blur-md">
+                            {new Date(msg.timestamp).toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+                          </span>
+                        </motion.div>
                       )}
-                      <div className="flex items-center justify-end gap-1 self-end">
-                        <span className="text-[9px] text-gray-400 uppercase">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        {msg.isMe && (
-                          <div className="flex items-center">
-                            {msg.status === 'queued' ? (
-                              <Clock size={10} className="text-gray-500" />
-                            ) : msg.status === 'sent' ? (
-                              <Check size={12} className="text-gray-400" />
-                            ) : (
-                              <CheckCheck size={12} className={msg.status === 'read' ? 'text-brand-blue' : 'text-gray-500'} />
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className={`flex ${msg.isMe ? 'justify-end' : 'justify-start'} group`}
+                      >
+                        <div className={`
+                          relative px-3 py-1.5 shadow-sm border border-white/5 flex flex-col min-w-[80px]
+                          ${msg.isMe ? 'bg-app-bubble-out text-white rounded-lg rounded-tr-none ml-12' : 'bg-app-bubble-in text-gray-100 rounded-lg rounded-tl-none mr-12'}
+                        `}>
+                          <div className={`absolute top-0 w-2 h-2 ${msg.isMe ? '-right-2' : '-left-2'} overflow-hidden`}>
+                             <div className={`w-4 h-4 rotate-45 ${msg.isMe ? 'bg-app-bubble-out -translate-x-2' : 'bg-app-bubble-in translate-x-2'}`}></div>
+                          </div>
+                          {msg.text && (
+                            <p className={`text-sm whitespace-pre-wrap leading-normal mb-1 ${msg.deleted ? 'italic opacity-50' : ''}`}>
+                              {msg.text}
+                            </p>
+                          )}
+                          {msg.file && !msg.deleted && (
+                            <div className="mb-1 p-2 bg-black/20 rounded-lg border border-white/5">
+                               {msg.file.type.startsWith('audio/') ? (
+                                 <VoiceMessage bubble={msg} />
+                               ) : (
+                                 <div className="flex items-center gap-3">
+                                    <FileText size={28} className="text-brand-blue shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                       <p className="text-xs font-bold truncate">{msg.file.name}</p>
+                                       <p className="text-[10px] text-gray-400 capitalize">{formatFileSize(msg.file.size)}</p>
+                                    </div>
+                                    {msg.file.url && (
+                                      <a href={msg.file.url} download={msg.file.name} className="text-brand-blue p-1">
+                                         <Download size={18} />
+                                      </a>
+                                    )}
+                                 </div>
+                               )}
+                            </div>
+                          )}
+                          <div className="flex items-center justify-end gap-1 self-end">
+                            {msg.isMe && !msg.deleted && (
+                              <button 
+                                onClick={() => deleteMessage(msg.id)}
+                                className="p-1 text-gray-400 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100 mr-1"
+                                title="Delete Message"
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            )}
+                            <span className="text-[9px] text-gray-400 uppercase">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            {msg.isMe && (
+                              <div className="flex items-center">
+                                {msg.status === 'queued' ? (
+                                  <Clock size={10} className="text-gray-500" />
+                                ) : msg.status === 'sent' ? (
+                                  <Check size={12} className="text-gray-400" />
+                                ) : (
+                                  <CheckCheck size={12} className={msg.status === 'read' ? 'text-brand-blue' : 'text-gray-500'} />
+                                )}
+                              </div>
                             )}
                           </div>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
-                ))}
-                {isTyping && (
+                        </div>
+                      </motion.div>
+                    </React.Fragment>
+                  );
+                })}
+                {remoteIsTyping && (
                   <div className="flex justify-start">
-                    <div className="bg-app-bubble-in px-4 py-2 rounded-xl rounded-tl-none flex gap-1">
-                      <div className="w-1 h-1 bg-brand-blue rounded-full animate-bounce" />
-                      <div className="w-1 h-1 bg-brand-blue rounded-full animate-bounce [animation-delay:0.2s]" />
-                      <div className="w-1 h-1 bg-brand-blue rounded-full animate-bounce [animation-delay:0.4s]" />
+                    <div className="flex flex-col gap-1">
+                      <span className="text-[10px] text-gray-500 font-bold ml-2 uppercase tracking-tighter">
+                         {remoteName || 'Peer'} is typing
+                      </span>
+                      <div className="bg-app-bubble-in px-4 py-2 rounded-xl rounded-tl-none flex gap-1 w-fit">
+                        <div className="w-1 h-1 bg-brand-blue rounded-full animate-bounce" />
+                        <div className="w-1 h-1 bg-brand-blue rounded-full animate-bounce [animation-delay:0.2s]" />
+                        <div className="w-1 h-1 bg-brand-blue rounded-full animate-bounce [animation-delay:0.4s]" />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2074,7 +2373,32 @@ export default function App() {
                       <Paperclip size={24} />
                     </button>
                     <input type="file" ref={fileInputRef} onChange={sendFile} className="hidden" />
-                    <div className="flex-1 bg-app-bg rounded-[24px] flex items-end px-4 py-2 min-h-[48px]">
+                    <button 
+                      onClick={() => setShowEmojiPicker(!showEmojiPicker)} 
+                      className={`p-3 transition-colors ${showEmojiPicker ? 'text-brand-blue' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      <Smile size={24} />
+                    </button>
+                    
+                    {showEmojiPicker && (
+                      <div className="absolute bottom-20 left-4 z-50 shadow-2xl rounded-2xl overflow-hidden border border-white/10">
+                        <EmojiPicker 
+                          onEmojiClick={(emojiData) => {
+                            onEmojiClick(emojiData);
+                            setShowEmojiPicker(false);
+                          }}
+                          theme={EmojiTheme.DARK}
+                          autoFocusSearch={false}
+                          skinTonesDisabled
+                          searchDisabled
+                          previewConfig={{ showPreview: false }}
+                          height={350}
+                          width={300}
+                        />
+                      </div>
+                    )}
+
+                <div className="flex-1 bg-app-bg rounded-[24px] flex items-end px-4 py-2 min-h-[48px] border border-transparent transition-colors shadow-inner">
                        <textarea
                          placeholder="Type a message"
                          rows={1}
@@ -2167,8 +2491,12 @@ export default function App() {
                   animate={{ scale: 1, y: 0 }}
                   className="bg-app-sec w-full max-w-sm rounded-[32px] p-8 shadow-2xl border border-white/10 text-center"
                 >
-                  <div className="w-20 h-20 bg-brand-blue/10 rounded-full flex items-center justify-center mx-auto mb-6">
-                    <UserPlus size={40} className="text-brand-blue" />
+                  <div className="w-20 h-20 bg-brand-blue/10 rounded-full flex items-center justify-center mx-auto mb-6 overflow-hidden border-2 border-brand-blue/20">
+                    {potentialContact.avatar ? (
+                      <img src={potentialContact.avatar} alt={potentialContact.name} className="w-full h-full object-cover" />
+                    ) : (
+                      <UserPlus size={40} className="text-brand-blue" />
+                    )}
                   </div>
                   <h3 className="text-2xl font-bold text-white mb-2">Save New Contact?</h3>
                   <p className="text-gray-400 text-sm mb-8">

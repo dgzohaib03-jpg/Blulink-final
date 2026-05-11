@@ -7,6 +7,7 @@ export interface Message {
   timestamp: number;
   isMe: boolean;
   status?: 'sent' | 'delivered' | 'read' | 'queued';
+  deleted?: boolean;
   file?: {
     name: string;
     size: number;
@@ -19,6 +20,7 @@ export interface Message {
 export interface Contact {
   id: string;
   name: string;
+  avatar?: string;
   addedAt: number;
 }
 
@@ -26,6 +28,7 @@ export interface ContactRequest {
   id: string;
   senderId: string;
   senderName: string;
+  senderAvatar?: string;
   timestamp: number;
   status: 'pending' | 'accepted' | 'declined';
 }
@@ -40,7 +43,7 @@ export interface CallRecord {
 }
 
 export interface PeerData {
-  type: 'chat' | 'system' | 'typing' | 'receipt' | 'key-exchange';
+  type: 'chat' | 'system' | 'typing' | 'receipt' | 'key-exchange' | 'delete-message';
   payload: any;
 }
 

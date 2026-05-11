@@ -1,5 +1,5 @@
 {
   "name": "BlueLink Mesh P2P",
-  "description": "Totally offline, secure, peer-to-peer mobile mesh chat. Uses Web Bluetooth for proximity discovery and WebRTC for direct device-to-device communication. Capacitor-ready for Android/iOS.",
+  "description": "Totally offline, secure, peer-to-peer mobile mesh chat. Uses Web Bluetooth for proximity discovery and WebRTC for direct device-to-device communication. PWA and Capacitor-ready with automated GitHub Actions for APK builds.",
   "requestFramePermissions": ["microphone", "camera", "bluetooth"]
 }
