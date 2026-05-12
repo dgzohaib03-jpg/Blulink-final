@@ -16,6 +16,7 @@ import { Html5QrcodeScanner } from 'html5-qrcode';
 import { bluetoothMesh, MeshNode } from './lib/bluetoothMesh';
 import { Message, PeerData, Contact, CallRecord, ContactRequest } from './types';
 import EmojiPicker, { Theme as EmojiTheme } from 'emoji-picker-react';
+import Onboarding from './components/Onboarding';
 import { 
   generateKeyPair, 
   exportPublicKey, 
@@ -140,7 +141,11 @@ export default function App() {
   const [remoteId, setRemoteId] = useState<string>('');
   const [remoteName, setRemoteName] = useState<string>('');
   const [remoteAvatar, setRemoteAvatar] = useState<string>('');
-  const [step, setStep] = useState<'discovery' | 'chat' | 'account' | 'calls' | 'contacts' | 'nearby'>('discovery');
+  const [step, setStep] = useState<'onboarding' | 'discovery' | 'chat' | 'account' | 'calls' | 'contacts' | 'nearby'>(() => {
+    const onboarded = localStorage.getItem('bluelink_onboarded') === 'true';
+    const hasName = !!localStorage.getItem('bluelink_name');
+    return onboarded && hasName ? 'discovery' : 'onboarding';
+  });
   const [discoveredNodes, setDiscoveredNodes] = useState<{id: string, name: string, signal: number, dist: number, avatar?: string, type: 'known' | 'unknown'}[]>([]);
   const [isScanningActive, setIsScanningActive] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
@@ -355,7 +360,7 @@ export default function App() {
   // Background Mesh Discovery Effect
   useEffect(() => {
     const runDiscovery = async () => {
-      if (step === 'onboarding' as any) return;
+      if (step === 'onboarding') return;
       
       await bluetoothMesh.initialize();
       
@@ -1435,6 +1440,23 @@ export default function App() {
     c.name.toLowerCase().includes(contactSearch.toLowerCase()) || 
     c.id.toLowerCase().includes(contactSearch.toLowerCase())
   );
+
+  if (step === 'onboarding') {
+    return (
+      <Onboarding
+        initialName={userName}
+        initialAvatar={userAvatar}
+        onComplete={({ name, avatar }) => {
+          setUserName(name);
+          setUserAvatar(avatar);
+          localStorage.setItem('bluelink_name', name);
+          if (avatar) localStorage.setItem('bluelink_avatar', avatar);
+          localStorage.setItem('bluelink_onboarded', 'true');
+          setStep('discovery');
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-app-sec font-sans text-gray-100 overflow-hidden items-center justify-center transition-colors">
