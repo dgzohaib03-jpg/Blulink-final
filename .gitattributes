@@ -1,0 +1,20 @@
+# Treat all binary file types as binary, never normalize line endings.
+# This prevents critical files like gradle-wrapper.jar from getting corrupted
+# when the repo is checked out on Windows or by tools that auto-convert text.
+*.jar binary
+*.apk binary
+*.aar binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.keystore binary
+*.jks binary
+*.so binary
+*.zip binary
+
+# Force LF for shell scripts so they run on Linux CI runners
+gradlew text eol=lf
+*.sh text eol=lf

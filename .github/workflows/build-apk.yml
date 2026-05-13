@@ -34,6 +34,24 @@ jobs:
       - name: Sync Capacitor
         run: npx cap sync android
 
+      - name: Validate Gradle wrapper jar
+        run: |
+          cd android
+          # Some checkouts can deliver a corrupt gradle-wrapper.jar (e.g. when
+          # the file was committed with text-mode line endings). Re-download a
+          # known-good copy from the Gradle release that matches the wrapper
+          # properties whenever the local jar is invalid.
+          WRAPPER_VERSION=$(grep distributionUrl gradle/wrapper/gradle-wrapper.properties | sed -E 's|.*gradle-([0-9.]+)-.*|\1|')
+          echo "Wrapper version: $WRAPPER_VERSION"
+          if ! unzip -tq gradle/wrapper/gradle-wrapper.jar > /dev/null 2>&1; then
+            echo "gradle-wrapper.jar is corrupt - re-downloading from gradle/gradle@v$WRAPPER_VERSION"
+            curl -fSL -o gradle/wrapper/gradle-wrapper.jar \
+              "https://raw.githubusercontent.com/gradle/gradle/v$WRAPPER_VERSION/gradle/wrapper/gradle-wrapper.jar"
+            unzip -tq gradle/wrapper/gradle-wrapper.jar
+          else
+            echo "gradle-wrapper.jar is valid"
+          fi
+
       - name: Build with Gradle
         run: |
           cd android
