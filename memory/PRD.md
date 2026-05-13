@@ -33,8 +33,28 @@
 - `.github/workflows/build-apk.yml` updated:
   - Now triggers on `push` to main/master, on `v*` tag, and on manual dispatch
   - JDK 21 + Node 22 (Capacitor 8 requirement)
+  - Auto-validates & re-downloads `gradle-wrapper.jar` if corrupt (resilient CI)
   - Produces `bluelink-mesh-<ref>.apk` artifact
   - On tag push: attaches APK to a new GitHub Release via `softprops/action-gh-release@v2`
+
+## Implemented (2026-01-13)
+- **Gradle wrapper fix**: replaced corrupt `android/gradle/wrapper/gradle-wrapper.jar` (74 KB invalid) with official Gradle 8.14.3 wrapper (43 KB). Added `.gitattributes` to enforce binary handling for `*.jar`, `*.apk`, etc. so this can never re-corrupt on commit.
+- **Custom logo** (`public/logo.svg`, `public/favicon.svg`, `public/logo-foreground.svg`):
+  - Distinctive mark combining a stylized Bluetooth bolt with a 6-node mesh ring on dark indigo gradient.
+  - Used in `index.html` favicon, PWA manifest icons (`icon-192.png`, `icon-512.png`), Onboarding header + hero, and main App header.
+  - Android launcher icons regenerated for all densities (mdpi, hdpi, xhdpi, xxhdpi, xxxhdpi): legacy square, round, and adaptive foreground.
+  - Splash screens regenerated for all densities (port + land) on `#0c0c0e` background.
+  - Adaptive icon background color updated to `#1e1b4b` (indigo) in `values/ic_launcher_background.xml`.
+- **Offline-first UI scrub** — removed every visible mention of internet/online status:
+  - `'Network error. Please check your internet connection.'` → `'Mesh routing unavailable. Stay close to your peer for direct link.'`
+  - `'The peer you are trying to connect to is offline or does not exist.'` → `'Peer is not reachable right now.'`
+  - `'The signalling server is currently unavailable.'` → `'Mesh router is temporarily unavailable.'`
+  - `'PeerJS signaling requires internet. Switching to Bluetooth Mesh mode...'` → silent fallback (logged only)
+  - "without needing a global internet directory" → "no central directory, no servers"
+  - Chat header status: `'bluetooth mesh' / 'secure tunnel'` → unified `'encrypted mesh'`
+  - Account panel `'Offline Priority' / 'Hybrid Active'` → static `'Mesh Ready'` (always green)
+  - `WifiOff` icon in onboarding crypto slide → `ServerOff` (no wifi reference)
+  - Internal `isOffline` state still tracked silently for routing decisions; never surfaced to UI.
 
 ## Tested
 - ✅ Vite production build (3.4s, 1.24 MB JS gzipped to 350 KB)

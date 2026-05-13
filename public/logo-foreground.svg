@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" fill="none">
+  <defs>
+    <linearGradient id="bolt" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#a5b4fc"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+  </defs>
+  <!-- Adaptive foreground: 108x108 canvas with content inside the 72x72 safe zone (centered). -->
+  <!-- Mesh nodes -->
+  <g fill="#818cf8" opacity="0.9">
+    <circle cx="54" cy="22" r="3.5"/>
+    <circle cx="80" cy="36" r="3.5"/>
+    <circle cx="80" cy="72" r="3.5"/>
+    <circle cx="54" cy="86" r="3.5"/>
+    <circle cx="28" cy="72" r="3.5"/>
+    <circle cx="28" cy="36" r="3.5"/>
+  </g>
+  <!-- Mesh dashed lines -->
+  <g stroke="#818cf8" stroke-width="1.4" stroke-opacity="0.5" stroke-dasharray="2.5 3" stroke-linecap="round">
+    <line x1="54" y1="22" x2="54" y2="54"/>
+    <line x1="80" y1="36" x2="54" y2="54"/>
+    <line x1="80" y1="72" x2="54" y2="54"/>
+    <line x1="54" y1="86" x2="54" y2="54"/>
+    <line x1="28" y1="72" x2="54" y2="54"/>
+    <line x1="28" y1="36" x2="54" y2="54"/>
+  </g>
+  <!-- Bluetooth bolt -->
+  <path d="M 54 30 L 68 42 L 44 54 L 68 58 L 54 70 L 54 30 L 44 42 M 54 50 L 68 58"
+        stroke="url(#bolt)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <circle cx="54" cy="54" r="1.8" fill="#a5b4fc"/>
+</svg>

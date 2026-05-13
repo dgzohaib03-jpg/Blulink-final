@@ -6,7 +6,6 @@
 import React, { useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
-  Bluetooth,
   Radio,
   Lock,
   CheckCheck,
@@ -16,7 +15,7 @@ import {
   User,
   Camera,
   Sparkles,
-  WifiOff,
+  ServerOff,
   KeyRound,
   Zap,
 } from 'lucide-react';
@@ -47,9 +46,9 @@ function WelcomeVisual() {
       {[0, 1, 2].map((i) => (
         <motion.div
           key={i}
-          className="absolute inset-0 rounded-full border border-brand-blue/40"
-          initial={{ scale: 0.4, opacity: 0.8 }}
-          animate={{ scale: 1.6, opacity: 0 }}
+          className="absolute inset-0 rounded-3xl border border-brand-blue/40"
+          initial={{ scale: 0.6, opacity: 0.8 }}
+          animate={{ scale: 1.4, opacity: 0 }}
           transition={{
             duration: 2.4,
             repeat: Infinity,
@@ -58,14 +57,14 @@ function WelcomeVisual() {
           }}
         />
       ))}
-      <motion.div
+      <motion.img
+        src="/logo.svg"
+        alt="BlueLink"
         initial={{ scale: 0.6, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ duration: 0.6, ease: 'easeOut' }}
-        className="relative z-10 w-28 h-28 rounded-3xl bg-gradient-to-br from-brand-blue to-brand-blue-dark flex items-center justify-center shadow-[0_0_60px_rgba(129,140,248,0.45)]"
-      >
-        <Bluetooth size={48} className="text-white" />
-      </motion.div>
+        className="relative z-10 w-40 h-40 rounded-[2rem] shadow-[0_0_60px_rgba(129,140,248,0.45)]"
+      />
     </div>
   );
 }
@@ -160,7 +159,7 @@ function CryptoVisual() {
       {[
         { Icon: KeyRound, x: -75, y: -30, delay: 0 },
         { Icon: ShieldCheck, x: 70, y: -55, delay: 0.4 },
-        { Icon: WifiOff, x: 70, y: 55, delay: 0.8 },
+        { Icon: ServerOff, x: 70, y: 55, delay: 0.8 },
         { Icon: Zap, x: -70, y: 50, delay: 1.2 },
       ].map(({ Icon, x, y, delay }, i) => (
         <motion.div
@@ -385,9 +384,11 @@ export default function Onboarding({
         {/* Top bar */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-xl bg-brand-blue/20 border border-brand-blue/40 flex items-center justify-center">
-              <Bluetooth size={16} className="text-brand-blue" />
-            </div>
+            <img
+              src="/logo.svg"
+              alt="BlueLink"
+              className="w-9 h-9 rounded-xl shadow-[0_0_18px_rgba(129,140,248,0.35)]"
+            />
             <span className="text-[11px] font-black tracking-[0.3em] text-white/80 uppercase">
               BlueLink Mesh
             </span>

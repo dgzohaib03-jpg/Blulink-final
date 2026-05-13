@@ -536,19 +536,19 @@ export default function App() {
             message = 'API Key is invalid.';
             break;
           case 'network':
-            message = 'Network error. Please check your internet connection.';
+            message = 'Mesh routing unavailable. Stay close to your peer for direct link.';
             break;
           case 'peer-unavailable':
-            message = 'The peer you are trying to connect to is offline or does not exist.';
+            message = 'Peer is not reachable right now.';
             break;
           case 'ssl-error':
-            message = 'SSL/TLS error. Secure connection could not be established.';
+            message = 'Secure channel could not be established.';
             break;
           case 'server-error':
-            message = 'The signalling server is currently unavailable.';
+            message = 'Mesh router is temporarily unavailable.';
             break;
           case 'socket-error':
-            message = 'Socket error. Connection to server failed. Retrying...';
+            message = 'Link interrupted. Retrying...';
             setTimeout(() => {
               if (newPeer && !newPeer.destroyed) {
                 newPeer.reconnect();
@@ -556,7 +556,7 @@ export default function App() {
             }, 5000);
             break;
           case 'socket-closed':
-            message = 'Connection closed unexpectedly. Retrying...';
+            message = 'Link closed unexpectedly. Retrying...';
             setTimeout(() => {
               if (newPeer && !newPeer.destroyed) {
                 newPeer.reconnect();
@@ -574,7 +574,7 @@ export default function App() {
               if (failedId && !failedId.startsWith('bluelink-')) {
                 message = `Peer ID missing 'bluelink-' prefix. Ensure the full ID is used.`;
               } else {
-                message = 'Encryption tunnel failed. The peer may be offline or behind a restrictive network.';
+                message = 'Encryption tunnel failed. Peer may be out of range.';
               }
             }
         }
@@ -957,7 +957,7 @@ export default function App() {
 
     if (!peer || peer.destroyed) {
       if (isOffline) {
-        setLastError('PeerJS signaling requires internet. Switching to Bluetooth Mesh mode...');
+        console.log('[Mesh] Falling back to Bluetooth mesh mode.');
       }
       return;
     }
@@ -1500,7 +1500,7 @@ export default function App() {
                   <div>
                     <h4 className="text-sm font-bold text-white mb-1">Local Mesh Discovery</h4>
                     <p className="text-xs text-slate-400 leading-relaxed">
-                      Your device scans local airwaves (Bluetooth/Radio) to find peers without needing a global internet directory.
+                      Your device scans local airwaves (Bluetooth/Radio) to find peers directly — no central directory, no servers.
                     </p>
                   </div>
                 </div>
@@ -1549,7 +1549,7 @@ export default function App() {
                 <ChevronLeft size={24} />
               </button>
             )}
-                <div className={`w-10 h-10 rounded-full ${step === 'chat' ? 'bg-brand-blue shadow-lg shadow-brand-blue/20' : 'bg-brand-blue/10 border border-brand-blue/20'} flex items-center justify-center overflow-hidden relative`}>
+                <div className={`w-10 h-10 rounded-2xl ${step === 'chat' ? 'bg-brand-blue shadow-lg shadow-brand-blue/20' : 'overflow-hidden'} flex items-center justify-center relative`}>
               {step === 'chat' ? (
                 remoteAvatar ? (
                   <img src={remoteAvatar} alt={remoteName} className="w-full h-full object-cover" />
@@ -1557,7 +1557,7 @@ export default function App() {
                   <div className="text-white font-bold">{remoteName.substring(0, 1).toUpperCase()}</div>
                 )
               ) : (
-                <Bluetooth size={20} className="text-brand-blue" />
+                <img src="/logo.svg" alt="BlueLink" className="w-10 h-10" />
               )}
             </div>
             <div className="flex flex-col">
@@ -1568,9 +1568,9 @@ export default function App() {
                     {connectionStatus === 'connected' ? (
                       <>
                         <div className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
-                        {isOffline ? 'bluetooth mesh' : 'secure tunnel'}
+                        encrypted mesh
                       </>
-                    ) : 'connecting...'}
+                    ) : 'linking...'}
                   </span>
                 </>
               ) : (
@@ -1761,8 +1761,8 @@ export default function App() {
                           </div>
                           <div className="flex justify-between items-center">
                              <span className="text-[9px] text-gray-600 font-bold uppercase">Link Status</span>
-                             <span className={`text-[9px] font-black uppercase tracking-widest ${isOffline ? 'text-red-500' : 'text-green-500'}`}>
-                                {isOffline ? 'Offline Priority' : 'Hybrid Active'}
+                             <span className="text-[9px] font-black uppercase tracking-widest text-green-500">
+                                Mesh Ready
                              </span>
                           </div>
                           <div className="flex justify-between items-center">
