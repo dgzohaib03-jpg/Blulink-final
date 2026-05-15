@@ -5,10 +5,10 @@
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Device } from '@capacitor/device';
-import { Network } from '@capacitor/network';
+// Offline-only: Network plugin removed
 import { Capacitor } from '@capacitor/core';
 import { BleClient } from '@capacitor-community/bluetooth-le';
-import { Peer, DataConnection } from 'peerjs';
+// Offline-only mode: PeerJS removed, using pure Bluetooth mesh
 import { motion, AnimatePresence } from 'motion/react';
 import { Bluetooth, BluetoothOff, Send, User, ChevronLeft, QrCode, Scan, Copy, Check, CheckCheck, Info, FileText, Download, Paperclip, Phone, PhoneOff, Mic, MicOff, UserPlus, Trash2, Users, Clock, StopCircle, Activity, MessageSquare, Search, MoreVertical, Smile, PhoneIncoming, PhoneOutgoing, PhoneMissed, Radio, X, Play, Pause, Moon, Sun } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -129,8 +129,8 @@ export default function App() {
     return `bluelink-${trimmed}`;
   };
 
-  const [peer, setPeer] = useState<Peer | null>(null);
-  const [connection, setConnection] = useState<DataConnection | null>(null);
+  // Using pure Bluetooth mesh - no PeerJS
+  const [bleConnectedDevice, setBleConnectedDevice] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>(() => {
     const saved = localStorage.getItem('bluelink_messages');
     return saved ? JSON.parse(saved) : [];
@@ -153,35 +153,16 @@ export default function App() {
   const [lastTypingSent, setLastTypingSent] = useState(0);
   const [showId, setShowId] = useState(false);
   const [deviceInfo, setDeviceInfo] = useState<any>(null);
-  const [isOffline, setIsOffline] = useState(false);
-  const [networkType, setNetworkType] = useState<string>('unknown');
+  const [isOffline] = useState(true); // Always offline - Bluetooth mesh only
+  const [networkType] = useState<string>('ble');
 
   useEffect(() => {
-    const checkNetwork = async () => {
-      const isNative = Capacitor.isNativePlatform();
-      setDeviceInfo({
-        platform: isNative ? Capacitor.getPlatform() : 'web',
-        native: isNative,
-        version: '1.0.0-mesh-alpha'
-      });
-
-      if (isNative) {
-        const { Network } = await import('@capacitor/network');
-        const status = await Network.getStatus();
-        setIsOffline(!status.connected);
-        setNetworkType(status.connectionType);
-        
-        Network.addListener('networkStatusChange', status => {
-          setIsOffline(!status.connected);
-          setNetworkType(status.connectionType);
-        });
-      } else {
-        setIsOffline(!navigator.onLine);
-        window.addEventListener('online', () => setIsOffline(false));
-        window.addEventListener('offline', () => setIsOffline(true));
-      }
-    };
-    checkNetwork();
+    const isNative = Capacitor.isNativePlatform();
+    setDeviceInfo({
+      platform: isNative ? Capacitor.getPlatform() : 'web',
+      native: isNative,
+      version: '1.0.0-offline'
+    });
   }, []);
   const [copySuccess, setCopySuccess] = useState(false);
   const [showAddContact, setShowAddContact] = useState(false);
@@ -237,8 +218,7 @@ export default function App() {
 
   const [unreadCount, setUnreadCount] = useState(0);
   const [isTabActive, setIsTabActive] = useState(true);
-  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'disconnected'>('idle');
-  
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeMobileTab, setActiveMobileTab] = useState<'mesh' | 'id'>('mesh');
   const [syncingPeerId, setSyncingPeerId] = useState<string | null>(null);
@@ -466,136 +446,75 @@ export default function App() {
 
   // Real scan logic is now handled by the Background Mesh Discovery Effect
 
-  // Initialize PeerJS
+  // Initialize Bluetooth Mesh (offline-only mode)
+  const [bleInitialized, setBleInitialized] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+
   useEffect(() => {
-    if (userName && step !== 'onboarding') {
-      let savedId = localStorage.getItem('bluelink_peer_id');
-      
-      // Ensure BlueLink ID prefix for mesh identification
-      if (savedId && !savedId.startsWith('bluelink-')) {
-        savedId = `bluelink-${savedId}`;
-        localStorage.setItem('bluelink_peer_id', savedId);
-      }
+    if (userName && step !== 'onboarding' && !bleInitialized) {
+      const initBluetooth = async () => {
+        try {
+          await bluetoothMesh.initialize();
 
-      const newPeer = new Peer(savedId || `bluelink-${Math.random().toString(36).substring(2, 10)}`, {
-        config: {
-          iceServers: [
-            { urls: 'stun:stun.l.google.com:19302' },
-            { urls: 'stun:stun1.l.google.com:19302' },
-            { urls: 'stun:stun2.l.google.com:19302' },
-          ]
-        }
-      });
-      
-      newPeer.on('open', (id) => {
-        setPeerId(id);
-        localStorage.setItem('bluelink_peer_id', id);
-        if (!id.startsWith('bluelink-')) {
-          console.error('CRITICAL: Peer ID missing mesh prefix:', id);
-        }
-        console.log('My BlueLink Mesh Node ID is: ' + id);
-      });
+          let savedId = localStorage.getItem('bluelink_peer_id');
+          if (savedId && !savedId.startsWith('bluelink-')) {
+            savedId = `bluelink-${savedId}`;
+            localStorage.setItem('bluelink_peer_id', savedId);
+          }
 
-      newPeer.on('connection', (conn) => {
-        // Handle incoming connection
-        if (connection) {
-          conn.close(); // Only one connection for now
-          return;
-        }
-        
-        setupConnection(conn);
-      });
+          const myPeerId = savedId || `bluelink-${Math.random().toString(36).substring(2, 10)}`;
+          setPeerId(myPeerId);
+          localStorage.setItem('bluelink_peer_id', myPeerId);
+          console.log('BlueLink Mesh Node ID (offline-BLE): ' + myPeerId);
 
-      newPeer.on('call', (call) => {
-        setCallStatus('ringing');
-        setIsIncomingCall(true);
-        setActiveCall(call);
-      });
-
-      newPeer.on('error', (err: any) => {
-        console.error('Peer error:', err);
-        
-        let message = 'An unexpected error occurred.';
-        
-        switch (err.type) {
-          case 'browser-incompatible':
-            message = 'Your browser does not support P2P features.';
-            break;
-          case 'disconnected':
-            message = 'Disconnected from server. Attempting to reconnect...';
-            setTimeout(() => {
-              if (newPeer && !newPeer.destroyed && newPeer.disconnected) {
-                newPeer.reconnect();
-              }
-            }, 3000);
-            break;
-          case 'invalid-id':
-            message = 'The Peer ID provided is invalid.';
-            break;
-          case 'invalid-key':
-            message = 'API Key is invalid.';
-            break;
-          case 'network':
-            message = 'Mesh routing unavailable. Stay close to your peer for direct link.';
-            break;
-          case 'peer-unavailable':
-            message = 'Peer is not reachable right now.';
-            break;
-          case 'ssl-error':
-            message = 'Secure channel could not be established.';
-            break;
-          case 'server-error':
-            message = 'Mesh router is temporarily unavailable.';
-            break;
-          case 'socket-error':
-            message = 'Link interrupted. Retrying...';
-            setTimeout(() => {
-              if (newPeer && !newPeer.destroyed) {
-                newPeer.reconnect();
-              }
-            }, 5000);
-            break;
-          case 'socket-closed':
-            message = 'Link closed unexpectedly. Retrying...';
-            setTimeout(() => {
-              if (newPeer && !newPeer.destroyed) {
-                newPeer.reconnect();
-              }
-            }, 5000);
-            break;
-          case 'unavailable-id':
-            message = 'The Peer ID is already taken.';
-            break;
-          default:
-            if (err.message && err.message.includes('Could not connect to peer')) {
-              const matches = err.message.match(/Could not connect to peer ([^ ]+)/);
-              const failedId = matches ? matches[1] : '';
-              
-              if (failedId && !failedId.startsWith('bluelink-')) {
-                message = `Peer ID missing 'bluelink-' prefix. Ensure the full ID is used.`;
-              } else {
-                message = 'Encryption tunnel failed. Peer may be out of range.';
-              }
+          // Start advertising for other devices to discover us
+          await bluetoothMesh.startAdvertising(myPeerId, userName, async (deviceId, message) => {
+            console.log('Received BLE message from', deviceId, message);
+            if (message.type === 'chat') {
+              setMessages(prev => [...prev, {
+                id: message.payload.id || `msg-${Date.now()}`,
+                text: message.payload.text || '',
+                senderId: message.senderId,
+                isMe: false,
+                status: 'delivered',
+                timestamp: message.payload.timestamp || Date.now(),
+                file: message.payload.file
+              }]);
+              setRemoteId(message.senderId);
+              setStep('chat');
+            } else if (message.type === 'receipt') {
+              setMessages(prev => prev.map(m =>
+                m.id === message.payload.messageId ? { ...m, status: message.payload.status } : m
+              ));
             }
-        }
+          });
 
-        setConnectionStatus('disconnected');
-        setLastError(message);
-        
-        if (step === 'chat' && connectionStatus === 'connecting') {
-           setStep('discovery');
-        }
-        
-        // Auto-clear error after 5 seconds
-        setTimeout(() => setLastError(null), 5000);
-      });
+          // Start scanning for nearby devices
+          await bluetoothMesh.startDiscovery((node) => {
+            setDiscoveredNodes(prev => {
+              const exists = prev.find(n => n.id === node.id);
+              if (exists) {
+                return prev.map(n => n.id === node.id ? { ...n, signal: node.signal, lastSeen: node.lastSeen } : n);
+              }
+              return [...prev, { ...node, dist: 0, type: 'unknown' }];
+            });
+          });
 
-      setPeer(newPeer);
+          setBleInitialized(true);
+        } catch (e) {
+          console.error('Bluetooth init failed:', e);
+          setLastError('Bluetooth initialization failed. App works offline with BLE.');
+        }
+      };
+
+      initBluetooth();
+
       return () => {
-        newPeer.destroy();
+        bluetoothMesh.stopDiscovery();
+        bluetoothMesh.stopAdvertising();
       };
     }
-  }, [userName, step === 'onboarding']);
+  }, [userName, step === 'onboarding', bleInitialized]);
 
   // Auto-sync Effect for Queued Messages
   useEffect(() => {
