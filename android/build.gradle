@@ -21,6 +21,17 @@ subprojects {
             sourceCompatibility = "17"
             targetCompatibility = "17"
         }
+        // Fix Capacitor Java 21 issue
+        project.tasks.withType(JavaCompile).configureEach {
+            options.compilerArgs.addAll(['-source', '17', '-target', '17'])
+        }
+    }
+    // Apply to all subprojects including capacitor
+    plugins.withId('java') {
+        project.java {
+            sourceCompatibility = JavaVersion.VERSION_17
+            targetCompatibility = JavaVersion.VERSION_17
+        }
     }
 }
 
